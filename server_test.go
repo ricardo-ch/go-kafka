@@ -2,10 +2,11 @@ package kafka
 
 import (
 	"context"
-	"github.com/stretchr/testify/assert"
 	"testing"
-	"github.com/Shopify/sarama"
 	"time"
+
+	"github.com/Shopify/sarama"
+	"github.com/stretchr/testify/assert"
 )
 
 func Test_NewServer_Should_Return_Working_Endpoint(t *testing.T) {
@@ -33,9 +34,9 @@ func Test_NewServer_Should_Return_Working_Endpoint(t *testing.T) {
 	assert.Nil(t, err)
 
 	select {
-		case <- timeout:
-			assert.Fail(t, "timeout waiting for endpoint to be called")
-		case request := <- chanDone:
-			assert.Equal(t, expectedRequest, request)
+	case <-timeout:
+		assert.Fail(t, "timeout waiting for endpoint to be called")
+	case request := <-chanDone:
+		assert.Equal(t, expectedRequest, request)
 	}
 }
