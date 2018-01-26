@@ -10,9 +10,12 @@ import (
 // NewServer creates a new Handler implementing go-kit interface
 func NewServer(e endpoint.Endpoint, decodeRequestFunc DecodeRequestFunc, encodeResponseFunc EncodeResponseFunc) Handler {
 	return func(ctx context.Context, msg *sarama.ConsumerMessage) (err error) {
-		m, err := decodeRequestFunc(ctx, msg)
-		if err != nil {
-			return err
+		var m interface{}
+		if decodeRequestFunc != nil {
+			m, err = decodeRequestFunc(ctx, msg)
+			if err != nil {
+				return err
+			}
 		}
 
 		_, err = e(ctx, m)

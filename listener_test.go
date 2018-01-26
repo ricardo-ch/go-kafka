@@ -42,12 +42,11 @@ func (c *mockConsumer) Close() (err error) {
 
 func Test_NewListener_Should_Return_Error_When_No_Broker_Provided(t *testing.T) {
 	// Arrange
-	Brokers = []string{}
 	handlers := make(map[string]Handler)
 	var f func(context.Context, *sarama.ConsumerMessage) error
 	handlers["topic"] = f
 	// Act
-	l, err := NewListener("groupID", handlers)
+	l, err := NewListener([]string{}, "groupID", handlers)
 	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, l)
@@ -55,22 +54,19 @@ func Test_NewListener_Should_Return_Error_When_No_Broker_Provided(t *testing.T) 
 
 func Test_NewListener_Should_Return_Error_When_No_GroupID_Provided(t *testing.T) {
 	// Arrange
-	Brokers = []string{"broker1", "broker2"}
 	handlers := make(map[string]Handler)
 	var f func(context.Context, *sarama.ConsumerMessage) error
 	handlers["topic"] = f
 	// Act
-	l, err := NewListener("", handlers)
+	l, err := NewListener([]string{"broker1", "broker2"}, "", handlers)
 	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, l)
 }
 
 func Test_NewListener_Should_Return_Error_When_No_Handlers_Provided(t *testing.T) {
-	// Arrange
-	Brokers = []string{"broker1", "broker2"}
 	// Act
-	l, err := NewListener("groupID", nil)
+	l, err := NewListener([]string{"broker1", "broker2"}, "groupID", nil)
 	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, l)
@@ -96,9 +92,8 @@ func Test_NewListener_Happy_Path(t *testing.T) {
 		return nil
 	}
 
-	Brokers = []string{leaderBroker.Addr()}
 	handlers := map[string]Handler{"topic-test": handler}
-	listener, err := NewListener("groupID", handlers)
+	listener, err := NewListener([]string{leaderBroker.Addr()}, "groupID", handlers)
 	assert.NotNil(t, listener)
 	assert.Nil(t, err)
 }
