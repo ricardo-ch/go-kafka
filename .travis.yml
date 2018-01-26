@@ -6,8 +6,11 @@ go:
 notifications:
  email: false
 
+before_install:
+ - go get github.com/mattn/goveralls
+
 script:
  - go get -t ./...
  - make build
  - make test
- 
+ - $GOPATH/bin/goveralls -service=travis-ci
