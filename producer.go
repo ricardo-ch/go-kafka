@@ -1,51 +1,28 @@
 package kafka
 
 import (
-	"bytes"
-	"encoding/json"
-	"time"
-
 	"github.com/Shopify/sarama"
 	"github.com/pkg/errors"
 )
 
-type Encoder interface {
-	Encode(payload interface{}) ([]byte, error)
-}
-
-type DefaultEncoder struct{}
-
-func (f DefaultEncoder) Encode(payload interface{}) ([]byte, error) {
-	buffer := bytes.Buffer{}
-	err := json.NewEncoder(&buffer).Encode(payload)
-	return buffer.Bytes(), err
-}
-
-//producer object represents kafka customer
+// producer object represents kafka producer
 type producer struct {
 	syncProducer sarama.SyncProducer
 }
 
-//Producer ...
+// Producer interface used to send messages
 type Producer interface {
 	SendMessage(key []byte, msg []byte, topic string) (partition int32, offset int64, err error)
 	Close() error
 }
 
-//NewProducer ...
-func NewProducer(brokers []string) (Producer, error) {
-	if brokers == nil || len(brokers) == 0 {
+// NewProducer creates a new instance of Producer
+func NewProducer() (Producer, error) {
+	if Brokers == nil || len(Brokers) == 0 {
 		return nil, errors.New("cannot create new producer, brokers cannot be empty")
 	}
 
-	// Init config
-	config := sarama.NewConfig()
-	config.Producer.Timeout = 5 * time.Second
-	config.Producer.Retry.Max = 3
-	config.Producer.Return.Successes = true
-	config.Producer.RequiredAcks = sarama.WaitForAll
-
-	p, err := sarama.NewSyncProducer(brokers, config)
+	p, err := sarama.NewSyncProducer(Brokers, &Config.Config)
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +30,7 @@ func NewProducer(brokers []string) (Producer, error) {
 	return producer{p}, nil
 }
 
-//SendMessage ...
+// SendMessage is used to send the meassage to kafka
 func (p producer) SendMessage(key []byte, msg []byte, topic string) (partition int32, offset int64, err error) {
 	if p.syncProducer == nil {
 		return 0, 0, errors.New("cannot send message. producer is nil")
@@ -69,7 +46,7 @@ func (p producer) SendMessage(key []byte, msg []byte, topic string) (partition i
 	return p.syncProducer.SendMessage(message)
 }
 
-//Close ...
+// Close the producer and dependencies
 func (p producer) Close() error {
 	if p.syncProducer != nil {
 		return p.syncProducer.Close()

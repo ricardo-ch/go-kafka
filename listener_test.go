@@ -42,11 +42,12 @@ func (c *mockConsumer) Close() (err error) {
 
 func Test_NewListener_Should_Return_Error_When_No_Broker_Provided(t *testing.T) {
 	// Arrange
+	Brokers = []string{}
 	handlers := make(map[string]Handler)
 	var f func(context.Context, *sarama.ConsumerMessage) error
 	handlers["topic"] = f
 	// Act
-	l, err := NewListener([]string{}, "groupID", handlers, sarama.OffsetNewest)
+	l, err := NewListener("groupID", handlers)
 	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, l)
@@ -54,19 +55,22 @@ func Test_NewListener_Should_Return_Error_When_No_Broker_Provided(t *testing.T) 
 
 func Test_NewListener_Should_Return_Error_When_No_GroupID_Provided(t *testing.T) {
 	// Arrange
+	Brokers = []string{"broker1", "broker2"}
 	handlers := make(map[string]Handler)
 	var f func(context.Context, *sarama.ConsumerMessage) error
 	handlers["topic"] = f
 	// Act
-	l, err := NewListener([]string{"broker1", "broker2"}, "", handlers, sarama.OffsetNewest)
+	l, err := NewListener("", handlers)
 	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, l)
 }
 
 func Test_NewListener_Should_Return_Error_When_No_Handlers_Provided(t *testing.T) {
+	// Arrange
+	Brokers = []string{"broker1", "broker2"}
 	// Act
-	l, err := NewListener([]string{"brocker1", "brocker2"}, "groupID", nil, sarama.OffsetNewest)
+	l, err := NewListener("groupID", nil)
 	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, l)
@@ -92,8 +96,9 @@ func Test_NewListener_Happy_Path(t *testing.T) {
 		return nil
 	}
 
+	Brokers = []string{leaderBroker.Addr()}
 	handlers := map[string]Handler{"topic-test": handler}
-	listener, err := NewListener([]string{leaderBroker.Addr()}, "groupID", handlers, sarama.OffsetNewest)
+	listener, err := NewListener("groupID", handlers)
 	assert.NotNil(t, listener)
 	assert.Nil(t, err)
 }
@@ -183,7 +188,7 @@ func Test_Consumer_Context_Cancel_Works(t *testing.T) {
 func Test_Consumer_Close_Works(t *testing.T) {
 	timeout := time.After(10 * time.Second)
 
-	consommerClosed := make(chan interface{}, 1)
+	consumerClosed := make(chan interface{}, 1)
 
 	mockConsumer := &mockConsumer{}
 	mockConsumer.On("Messages").Return(make(chan *sarama.ConsumerMessage))
@@ -198,7 +203,7 @@ func Test_Consumer_Close_Works(t *testing.T) {
 
 	go func() {
 		tested.Listen(context.Background())
-		consommerClosed <- true
+		consumerClosed <- true
 	}()
 
 	tested.Close()
@@ -206,6 +211,6 @@ func Test_Consumer_Close_Works(t *testing.T) {
 	select {
 	case <-timeout:
 		assert.Fail(t, "timeout waiting for consumer to close")
-	case <-consommerClosed:
+	case <-consumerClosed:
 	}
 }

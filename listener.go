@@ -2,21 +2,14 @@ package kafka
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/Shopify/sarama"
 	"github.com/bsm/sarama-cluster"
 	"github.com/pkg/errors"
-
-	"github.com/ricardo-ch/bookkeeping-worker/utility/logger"
 )
 
-const (
-	maxRetries        = 3
-	sleepBetweenRetry = 2 * time.Second
-)
-
+// Consumer interface to test
 type Consumer interface {
 	Messages() <-chan *sarama.ConsumerMessage
 	MarkOffset(msg *sarama.ConsumerMessage, metadata string)
@@ -30,35 +23,40 @@ type Consumer interface {
 	Subscriptions() map[string][]int32
 }
 
-//Handler that handle kafka messages received
+// Handler that handle received kafka messages
 type Handler func(ctx context.Context, msg *sarama.ConsumerMessage) error
 
-//Handlers defines a handler for a given topic
+// Handlers defines a handler for a given topic
 type Handlers map[string]Handler
 
-//listener object represents kafka customer
+// listener object represents kafka consumer
 type listener struct {
 	consumer Consumer
 	handlers Handlers
 	closed   chan interface{}
 }
 
+// listenerContextKey defines the key to provide in context
+// needs to be define to avoid collision.
+// Explanation https://golang.org/pkg/context/#WithValue
+type listenerContextKey string
+
 const (
-	contextTopicKey     = "topic"
-	contextkeyKey       = "key"
-	contextOffsetKey    = "offset"
-	contextTimestampKey = "timestamp"
+	contextTopicKey     = listenerContextKey("topic")
+	contextkeyKey       = listenerContextKey("key")
+	contextOffsetKey    = listenerContextKey("offset")
+	contextTimestampKey = listenerContextKey("timestamp")
 )
 
-//Listener ...
+// Listener is able to listen multiple topics with one handler by topic
 type Listener interface {
 	Listen(ctx context.Context) error
 	Close()
 }
 
-//NewListener ...
-func NewListener(brokers []string, groupID string, handlers Handlers, offset int64) (Listener, error) {
-	if brokers == nil || len(brokers) == 0 {
+// NewListener creates a new instance of Listener
+func NewListener(groupID string, handlers Handlers) (Listener, error) {
+	if Brokers == nil || len(Brokers) == 0 {
 		return nil, errors.New("cannot create new listener, brokers cannot be empty")
 	}
 	if groupID == "" {
@@ -68,19 +66,12 @@ func NewListener(brokers []string, groupID string, handlers Handlers, offset int
 		return nil, errors.New("cannot create new listener, handlers cannot be empty")
 	}
 
-	// Init config
-	config := cluster.NewConfig()
-
-	config.Consumer.Return.Errors = true
-	config.Group.Return.Notifications = true
-	config.Consumer.Offsets.Initial = offset
-
 	// Init consumer, consume errors & messages
 	var topics []string
 	for k := range handlers {
 		topics = append(topics, k)
 	}
-	consumer, err := cluster.NewConsumer(brokers, groupID, topics, config)
+	consumer, err := cluster.NewConsumer(Brokers, groupID, topics, Config)
 	if err != nil {
 		return nil, err
 	}
@@ -92,6 +83,7 @@ func NewListener(brokers []string, groupID string, handlers Handlers, offset int
 	}, nil
 }
 
+// Listen process incoming kafka messages with handlers configured by the listener
 func (l *listener) Listen(consumerContext context.Context) error {
 	if l.consumer == nil {
 		return errors.New("cannot subscribe. Customer is nil")
@@ -102,26 +94,27 @@ func (l *listener) Listen(consumerContext context.Context) error {
 		select {
 		case msg, more := <-l.consumer.Messages():
 			if more {
-				//TODO need to get context from kafka message header when feature available
+				// TODO need to get context from kafka message header when feature available
 				messageContext := context.WithValue(context.Background(), contextTopicKey, msg.Topic)
 				messageContext = context.WithValue(messageContext, contextkeyKey, msg.Key)
 				messageContext = context.WithValue(messageContext, contextOffsetKey, msg.Offset)
 				messageContext = context.WithValue(messageContext, contextTimestampKey, msg.Timestamp)
 
-				err := retry(messageContext, maxRetries, sleepBetweenRetry, l.handlers[msg.Topic], msg)
+				err := handleMessageWithRetry(messageContext, l.handlers[msg.Topic], msg, ConsumerMaxRetries)
 				if err != nil {
-					logger.LogStdErr.Errorf("Consume: %+v", err)
-					//TODO add process failure escalation
+					err = errors.Wrapf(err, "processing failed after %d attempts", ConsumerMaxRetries)
+					ErrorLogger.Printf("Consume: %+v", err)
+					// TODO add process failure escalation
 				}
 				l.consumer.MarkOffset(msg, "")
 			}
 		case ntf, more := <-l.consumer.Notifications():
 			if more {
-				logger.LogStdOut.Infof("Rebalanced: %+v", ntf)
+				Logger.Printf("Rebalanced: %+v", ntf)
 			}
 		case err, more := <-l.consumer.Errors():
 			if more {
-				logger.LogStdErr.Errorf("Error: %s", err.Error())
+				ErrorLogger.Printf("Error: %+v", err)
 			}
 		case <-consumerContext.Done():
 			return errors.New("context canceled")
@@ -131,6 +124,7 @@ func (l *listener) Listen(consumerContext context.Context) error {
 	}
 }
 
+// Close the listener and dependencies
 func (l *listener) Close() {
 	if l.consumer != nil {
 		l.consumer.Close() //this line may take a few seconds to execute
@@ -138,16 +132,12 @@ func (l *listener) Close() {
 	}
 }
 
-func retry(ctx context.Context, attempts int, sleep time.Duration, fn Handler, msg *sarama.ConsumerMessage) (err error) {
-	for i := 0; ; i++ {
-		err = fn(ctx, msg)
-		if err == nil {
-			return nil
-		}
-		if i >= (attempts - 1) {
-			break
-		}
-		time.Sleep(sleep)
+// handleMessageWithRetry call the handler function and retry if it fails
+func handleMessageWithRetry(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage, retries int) error {
+	err := handler(ctx, msg)
+	if err != nil && retries > 0 {
+		time.Sleep(DurationBeforeRetry)
+		return handleMessageWithRetry(ctx, handler, msg, retries-1)
 	}
-	return fmt.Errorf("processing failed after %d attempts, last error: %+v", attempts, err)
+	return err
 }
