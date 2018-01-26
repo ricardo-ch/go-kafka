@@ -6,6 +6,9 @@ The listener is able to listen multiple topics, and will execute a defined go-ki
 ## Quick start
 
 ```golang
+// set your config
+kafka.Brokers = []string{"broker1", "broker2"}
+
 // go-kit event endpoints
 var endpointEvent1 endpoint.Endpoint
 var endpointEvent2 endpoint.Endpoint
@@ -19,7 +22,7 @@ handlers := map[string]kafka.Handler{
 }
 
 // define your listener
-listener, _ := kafka.NewListener(brokers, "my-consumer-group", handlers, sarama.OffsetOldest)
+listener, _ := kafka.NewListener("my-consumer-group", handlers)
 defer listener.Close()
 
 // listen and enjoy

@@ -7,7 +7,7 @@ import (
 	"github.com/go-kit/kit/endpoint"
 )
 
-// NewServer ...
+// NewServer creates a new Handler implementing go-kit interface
 func NewServer(e endpoint.Endpoint, decodeRequestFunc DecodeRequestFunc, encodeResponseFunc EncodeResponseFunc) Handler {
 	return func(ctx context.Context, msg *sarama.ConsumerMessage) (err error) {
 		m, err := decodeRequestFunc(ctx, msg)
@@ -21,8 +21,8 @@ func NewServer(e endpoint.Endpoint, decodeRequestFunc DecodeRequestFunc, encodeR
 	}
 }
 
-// DecodeRequestFunc ...
+// DecodeRequestFunc struct using go-kit signature adapted to kafka
 type DecodeRequestFunc func(ctx context.Context, msg *sarama.ConsumerMessage) (request interface{}, err error)
 
-// EncodeResponseFunc ...
+// EncodeResponseFunc struct using go-kit signature adapted to kafka
 type EncodeResponseFunc func(ctx context.Context, msg []byte) (request interface{}, err error)
