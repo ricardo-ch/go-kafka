@@ -17,12 +17,12 @@ type Producer interface {
 }
 
 // NewProducer creates a new instance of Producer
-func NewProducer() (Producer, error) {
-	if Brokers == nil || len(Brokers) == 0 {
+func NewProducer(brokers []string) (Producer, error) {
+	if brokers == nil || len(brokers) == 0 {
 		return nil, errors.New("cannot create new producer, brokers cannot be empty")
 	}
 
-	p, err := sarama.NewSyncProducer(Brokers, &Config.Config)
+	p, err := sarama.NewSyncProducer(brokers, &Config.Config)
 	if err != nil {
 		return nil, err
 	}

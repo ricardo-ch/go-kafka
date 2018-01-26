@@ -55,8 +55,8 @@ type Listener interface {
 }
 
 // NewListener creates a new instance of Listener
-func NewListener(groupID string, handlers Handlers) (Listener, error) {
-	if Brokers == nil || len(Brokers) == 0 {
+func NewListener(brokers []string, groupID string, handlers Handlers) (Listener, error) {
+	if brokers == nil || len(brokers) == 0 {
 		return nil, errors.New("cannot create new listener, brokers cannot be empty")
 	}
 	if groupID == "" {
@@ -71,7 +71,7 @@ func NewListener(groupID string, handlers Handlers) (Listener, error) {
 	for k := range handlers {
 		topics = append(topics, k)
 	}
-	consumer, err := cluster.NewConsumer(Brokers, groupID, topics, Config)
+	consumer, err := cluster.NewConsumer(brokers, groupID, topics, Config)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +86,7 @@ func NewListener(groupID string, handlers Handlers) (Listener, error) {
 // Listen process incoming kafka messages with handlers configured by the listener
 func (l *listener) Listen(consumerContext context.Context) error {
 	if l.consumer == nil {
-		return errors.New("cannot subscribe. Customer is nil")
+		return errors.New("cannot subscribe. Consumer is nil")
 	}
 
 	// Consume all channels, wait for signal to exit

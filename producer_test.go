@@ -25,10 +25,8 @@ func (m mockedSyncProducer) SendMessages(msgs []*sarama.ProducerMessage) error {
 }
 
 func Test_NewProducer_Should_Return_Error_When_No_Broker_Provided(t *testing.T) {
-	// Arrange
-	Brokers = []string{}
 	// Act
-	p, err := NewProducer()
+	p, err := NewProducer([]string{})
 	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, p)
@@ -102,8 +100,7 @@ func Test_NewProducer_Return_Working_Producer(t *testing.T) {
 	prodSuccess.AddTopicPartition("topic-test", 0, sarama.ErrNoError)
 	leaderBroker.Returns(prodSuccess)
 
-	Brokers = []string{leaderBroker.Addr()}
-	prod, err := NewProducer()
+	prod, err := NewProducer([]string{leaderBroker.Addr()})
 	assert.Nil(t, err)
 
 	_, _, err = prod.SendMessage([]byte("test-key"), []byte("test-message"), "topic-test")

@@ -39,9 +39,6 @@ var DurationBeforeRetry = 2 * time.Second
 // Config is the sarama (cluster) config used for the consumer and producer.
 var Config = cluster.NewConfig()
 
-// Brokers is the list of brokers used to connect to kafka.
-var Brokers []string
-
 func init() {
 	// Init config with default values
 	Config.Group.Return.Notifications = true
