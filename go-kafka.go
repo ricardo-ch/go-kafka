@@ -44,6 +44,7 @@ func init() {
 	Config.Group.Return.Notifications = true
 	Config.Consumer.Return.Errors = true
 	Config.Consumer.Offsets.Initial = sarama.OffsetOldest
+	Config.Consumer.Offsets.Retention = 192 * time.Hour // 8 days to be above the default message retention time (7 days)
 	Config.Producer.Timeout = 5 * time.Second
 	Config.Producer.Retry.Max = 3
 	Config.Producer.Return.Successes = true
