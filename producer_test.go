@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Shopify/sarama"
+	cluster "github.com/bsm/sarama-cluster"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -27,6 +28,14 @@ func (m mockedSyncProducer) SendMessages(msgs []*sarama.ProducerMessage) error {
 func Test_NewProducer_Should_Return_Error_When_No_Broker_Provided(t *testing.T) {
 	// Act
 	p, err := NewProducer([]string{})
+	// Assert
+	assert.Error(t, err)
+	assert.Nil(t, p)
+}
+
+func Test_newProducerFromClient_Should_Return_Error_When_No_Client_Provided(t *testing.T) {
+	// Act
+	p, err := newProducerFromClient(nil)
 	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, p)
@@ -101,6 +110,30 @@ func Test_NewProducer_Return_Working_Producer(t *testing.T) {
 	leaderBroker.Returns(prodSuccess)
 
 	prod, err := NewProducer([]string{leaderBroker.Addr()})
+	assert.Nil(t, err)
+
+	_, _, err = prod.SendMessage([]byte("test-key"), []byte("test-message"), "topic-test")
+	assert.Nil(t, err)
+}
+
+func Test_newProducerFromClient_Return_Working_Producer(t *testing.T) {
+	leaderBroker := sarama.NewMockBroker(t, 1)
+
+	metadataResponse := new(sarama.MetadataResponse)
+	metadataResponse.AddBroker(leaderBroker.Addr(), leaderBroker.BrokerID())
+	metadataResponse.AddTopicPartition("topic-test", 0, leaderBroker.BrokerID(), nil, nil, sarama.ErrNoError)
+	leaderBroker.Returns(metadataResponse)
+
+	prodSuccess := new(sarama.ProduceResponse)
+	prodSuccess.AddTopicPartition("topic-test", 0, sarama.ErrNoError)
+	leaderBroker.Returns(prodSuccess)
+
+	client, err := cluster.NewClient([]string{leaderBroker.Addr()}, Config)
+	if err != nil {
+		assert.Fail(t, "We should be able to create a new client")
+	}
+
+	prod, err := newProducerFromClient(client)
 	assert.Nil(t, err)
 
 	_, _, err = prod.SendMessage([]byte("test-key"), []byte("test-message"), "topic-test")
