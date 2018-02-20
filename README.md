@@ -37,6 +37,19 @@ errc <- listener.Listen(ctx)
 * Create a producer
 * Create a go-kit like server
 
+## Consumer error handling
+
+The listener object is able to have a specific handle for consuming errors.
+By default, if an error occurs, it's retried 3 times (each attempt is separated by 2 seconds).
+And if there's still an error after the 3 retries, the error is logged and pushed to a topic named like `"group-id"-"original-topic-name"-error`.
+
+All this strategy can be overridden through the following config variables:
+
+* ConsumerMaxRetries
+* DurationBeforeRetry
+* PushConsumerErrorsToTopic
+* ErrorTopicPattern
+
 ## License
 
 go-kafka is licensed under the MIT license. (http://opensource.org/licenses/MIT)

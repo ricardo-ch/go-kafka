@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/Shopify/sarama"
@@ -31,7 +32,9 @@ type Handlers map[string]Handler
 
 // listener object represents kafka consumer
 type listener struct {
+	groupID  string
 	consumer Consumer
+	producer Producer
 	handlers Handlers
 	closed   chan interface{}
 }
@@ -71,13 +74,23 @@ func NewListener(brokers []string, groupID string, handlers Handlers) (Listener,
 	for k := range handlers {
 		topics = append(topics, k)
 	}
-	consumer, err := cluster.NewConsumer(brokers, groupID, topics, Config)
+	client, err := cluster.NewClient(brokers, Config)
+	if err != nil {
+		return nil, err
+	}
+	consumer, err := cluster.NewConsumerFromClient(client, groupID, topics)
+	if err != nil {
+		return nil, err
+	}
+	producer, err := newProducerFromClient(client)
 	if err != nil {
 		return nil, err
 	}
 
 	return &listener{
+		groupID:  groupID,
 		consumer: consumer,
+		producer: producer,
 		handlers: handlers,
 		closed:   make(chan interface{}),
 	}, nil
@@ -103,8 +116,7 @@ func (l *listener) Listen(consumerContext context.Context) error {
 				err := handleMessageWithRetry(messageContext, l.handlers[msg.Topic], msg, ConsumerMaxRetries)
 				if err != nil {
 					err = errors.Wrapf(err, "processing failed after %d attempts", ConsumerMaxRetries)
-					ErrorLogger.Printf("Consume: %+v", err)
-					// TODO add process failure escalation
+					l.handleErrorMessage(messageContext, err, msg)
 				}
 				l.consumer.MarkOffset(msg, "")
 			}
@@ -140,4 +152,24 @@ func handleMessageWithRetry(ctx context.Context, handler Handler, msg *sarama.Co
 		return handleMessageWithRetry(ctx, handler, msg, retries-1)
 	}
 	return err
+}
+
+func (l *listener) handleErrorMessage(ctx context.Context, initialError error, msg *sarama.ConsumerMessage) {
+	ErrorLogger.Printf("Consume: %+v", initialError)
+
+	if PushConsumerErrorsToTopic {
+		if l.producer == nil {
+			ErrorLogger.Printf("Cannot send message to error topic: producer is nil")
+		}
+
+		topicName := ErrorTopicPattern
+		topicName = strings.Replace(topicName, "$$CG$$", l.groupID, 1)
+		topicName = strings.Replace(topicName, "$$T$$", msg.Topic, 1)
+
+		// Send fee message to kafka
+		_, _, err := l.producer.SendMessage(msg.Key, msg.Value, topicName)
+		if err != nil {
+			ErrorLogger.Printf("Cannot send message to error topic: %+v", err)
+		}
+	}
 }

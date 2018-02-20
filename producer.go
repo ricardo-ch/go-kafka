@@ -30,6 +30,20 @@ func NewProducer(brokers []string) (Producer, error) {
 	return producer{p}, nil
 }
 
+// newProducerFromClient creates a new instance of Producer from an existing client
+func newProducerFromClient(client sarama.Client) (Producer, error) {
+	if client == nil {
+		return nil, errors.New("cannot create new producer from client, client cannot be nil")
+	}
+
+	p, err := sarama.NewSyncProducerFromClient(client)
+	if err != nil {
+		return nil, err
+	}
+
+	return producer{p}, nil
+}
+
 // SendMessage is used to send the meassage to kafka
 func (p producer) SendMessage(key []byte, msg []byte, topic string) (partition int32, offset int64, err error) {
 	if p.syncProducer == nil {
