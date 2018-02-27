@@ -60,15 +60,15 @@ type mockLogger struct {
 }
 
 func (m *mockLogger) Print(v ...interface{}) {
-	m.Called()
+	m.Called(v)
 }
 
 func (m *mockLogger) Printf(format string, v ...interface{}) {
-	m.Called()
+	m.Called(format, v)
 }
 
 func (m *mockLogger) Println(v ...interface{}) {
-	m.Called()
+	m.Called(v)
 }
 
 func Test_NewListener_Should_Return_Error_When_No_Broker_Provided(t *testing.T) {
@@ -192,7 +192,7 @@ func Test_Listen_Message_Error_NoTopic(t *testing.T) {
 	offsetMarked := make(chan interface{}, 1)
 
 	mockLogger := &mockLogger{}
-	mockLogger.On("Printf").Return().Run(func(mock.Arguments) {
+	mockLogger.On("Printf", mock.Anything, mock.Anything).Return().Run(func(mock.Arguments) {
 		errorLogged <- true
 	})
 	ErrorLogger = mockLogger
@@ -253,7 +253,7 @@ func Test_Listen_Message_Error_WithErrorTopic(t *testing.T) {
 	offsetMarked := make(chan interface{}, 1)
 
 	mockLogger := &mockLogger{}
-	mockLogger.On("Printf").Return().Run(func(mock.Arguments) {
+	mockLogger.On("Printf", mock.Anything, mock.Anything).Return().Run(func(mock.Arguments) {
 		errorLogged <- true
 	})
 	ErrorLogger = mockLogger
@@ -278,6 +278,77 @@ func Test_Listen_Message_Error_WithErrorTopic(t *testing.T) {
 
 	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
 		return fmt.Errorf("I want an error to be logged")
+	}
+
+	tested := listener{
+		groupID:  "group",
+		consumer: mockConsumer,
+		producer: mockProducer,
+		handlers: map[string]Handler{"topic-test": handler},
+	}
+
+	go tested.Listen(context.Background())
+	go func() {
+		msgChanel <- &sarama.ConsumerMessage{
+			Topic: "topic-test",
+		}
+	}()
+
+	for i := 0; i < 3; i++ {
+		select {
+		case <-timeout:
+			assert.Fail(t, "timeout waiting for consumer to process message")
+		case <-errorLogged:
+		case <-messageSent:
+		case <-offsetMarked:
+		}
+	}
+
+	mockProducer.AssertNumberOfCalls(t, "SendMessage", 1)
+	assert.Equal(t, "group-topic-test-error", capturedErrorTopic)
+}
+
+func Test_Listen_Message_Error_WithPanicTopic(t *testing.T) {
+	timeout := make(chan interface{})
+	go func() {
+		time.Sleep(10 * time.Second)
+		close(timeout)
+	}()
+	msgChanel := make(chan *sarama.ConsumerMessage)
+	errChanel := make(chan error)
+	notifChanel := make(chan *cluster.Notification)
+	errorLogged := make(chan interface{}, 1)
+	messageSent := make(chan interface{}, 1)
+	offsetMarked := make(chan interface{}, 1)
+
+	mockLogger := &mockLogger{}
+	mockLogger.On("Printf", mock.Anything, mock.Anything).Return().Run(func(args mock.Arguments) {
+		printedError := args.Get(1).([]interface{})[0].(error)
+		assert.Contains(t, printedError.Error(), "Panic")
+		errorLogged <- true
+	})
+	ErrorLogger = mockLogger
+	PushConsumerErrorsToTopic = true
+	DurationBeforeRetry = 2 * time.Millisecond
+
+	mockConsumer := &mockConsumer{}
+	mockConsumer.On("Messages").Return(msgChanel)
+	mockConsumer.On("Errors").Return(errChanel)
+	mockConsumer.On("MarkOffset").Return().Run(func(mock.Arguments) {
+		offsetMarked <- true
+	})
+	mockConsumer.On("CommitOffsets").Return(nil)
+	mockConsumer.On("Notifications").Return(notifChanel)
+
+	mockProducer := &mockProducer{}
+	var capturedErrorTopic string
+	mockProducer.On("SendMessage", mock.Anything, mock.Anything, mock.Anything).Return(int32(0), int64(0), nil).Run(func(args mock.Arguments) {
+		capturedErrorTopic = args.Get(2).(string)
+		messageSent <- true
+	})
+
+	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+		panic("Panicking, I want to it to be handle as an error")
 	}
 
 	tested := listener{
