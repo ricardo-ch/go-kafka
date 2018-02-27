@@ -145,8 +145,14 @@ func (l *listener) Close() {
 }
 
 // handleMessageWithRetry call the handler function and retry if it fails
-func handleMessageWithRetry(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage, retries int) error {
-	err := handler(ctx, msg)
+func handleMessageWithRetry(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage, retries int) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.Errorf("Panic happened during handle of message: %v", r)
+		}
+	}()
+
+	err = handler(ctx, msg)
 	if err != nil && retries > 0 {
 		time.Sleep(DurationBeforeRetry)
 		return handleMessageWithRetry(ctx, handler, msg, retries-1)
