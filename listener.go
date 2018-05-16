@@ -32,11 +32,12 @@ type Handlers map[string]Handler
 
 // listener object represents kafka consumer
 type listener struct {
-	groupID  string
-	consumer Consumer
-	producer Producer
-	handlers Handlers
-	closed   chan interface{}
+	groupID       string
+	consumer      Consumer
+	producer      Producer
+	handlers      Handlers
+	instrumenting *ConsumerMetricsService
+	closed        chan interface{}
 }
 
 // listenerContextKey defines the key to provide in context
@@ -58,7 +59,7 @@ type Listener interface {
 }
 
 // NewListener creates a new instance of Listener
-func NewListener(brokers []string, groupID string, handlers Handlers) (Listener, error) {
+func NewListener(brokers []string, groupID string, handlers Handlers, options ...ListenerOption) (Listener, error) {
 	if brokers == nil || len(brokers) == 0 {
 		return nil, errors.New("cannot create new listener, brokers cannot be empty")
 	}
@@ -87,13 +88,31 @@ func NewListener(brokers []string, groupID string, handlers Handlers) (Listener,
 		return nil, err
 	}
 
-	return &listener{
+	l := &listener{
 		groupID:  groupID,
 		consumer: consumer,
 		producer: producer,
 		handlers: handlers,
 		closed:   make(chan interface{}),
-	}, nil
+	}
+
+	//execute all method passed as option
+	for _, o := range options {
+		o(l)
+	}
+
+	return l, nil
+}
+
+//ListenerOption add listener option
+type ListenerOption func(l *listener)
+
+//WithInstrumenting add a instance of Prometheus metrics
+func WithInstrumenting() ListenerOption {
+	return func(l *listener) {
+		instrumenting := NewConsumerMetricsService(l.groupID)
+		l.instrumenting = &instrumenting
+	}
 }
 
 // Listen process incoming kafka messages with handlers configured by the listener
@@ -113,7 +132,12 @@ func (l *listener) Listen(consumerContext context.Context) error {
 				messageContext = context.WithValue(messageContext, contextOffsetKey, msg.Offset)
 				messageContext = context.WithValue(messageContext, contextTimestampKey, msg.Timestamp)
 
-				err := handleMessageWithRetry(messageContext, l.handlers[msg.Topic], msg, ConsumerMaxRetries)
+				h := l.handlers[msg.Topic]
+				if l.instrumenting != nil {
+					h = l.instrumenting.Instrumentation(h)
+				}
+
+				err := handleMessageWithRetry(messageContext, h, msg, ConsumerMaxRetries)
 				if err != nil {
 					err = errors.Wrapf(err, "processing failed after %d attempts", ConsumerMaxRetries)
 					l.handleErrorMessage(messageContext, err, msg)
