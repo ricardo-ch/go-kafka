@@ -36,6 +36,32 @@ errc <- listener.Listen(ctx)
 * Retry policy on message handling
 * Create a producer
 * Create a go-kit like server
+* Add instrumenting on Prometheus
+
+## instrumenting
+
+ Currently the instrumenting is implemented only on consumer part.
+ The metrics are exported on prometheus
+ The metrics are :
+* Number of requests processed
+* Number of requests foaled
+* Total duration in milliseconds
+
+To activate the tracing on go-Kafka:
+
+```golang
+// define your listener
+listener, _ := kafka.NewListener(brokers, "my-consumer-group", handlers, kafka.WithInstrumenting())
+defer listener.Close()
+
+// Instances a new HTTP server for metrics using prometheus 
+go func() {
+	httpAddr := ":8080" 
+	mux.Handle("/metrics", promhttp.Handler())
+	errc <- http.ListenAndServe(httpAddr, mux)
+}()
+
+```
 
 ## Consumer error handling
 

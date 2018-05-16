@@ -44,7 +44,7 @@ func NewConsumerMetricsService(appName string) ConsumerMetricsService {
 			Namespace: "kafka",
 			Subsystem: "consumer",
 			Name:      "request_latency_milliseconds",
-			Help:      "Total duration in milliseconds.",
+			Help:      "Total duration in milliseconds",
 		}, fieldKeys)
 	prometheus.MustRegister(c.latency)
 
