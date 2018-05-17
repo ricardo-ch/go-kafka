@@ -63,7 +63,6 @@ func (c *ConsumerMetricsService) Instrumentation(next Handler) Handler {
 				c.requestFailed.WithLabelValues(c.appName, msg.Topic).Inc()
 			}
 		}(time.Now())
-
 		return
 	}
 }

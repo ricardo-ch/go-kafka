@@ -44,7 +44,7 @@ errc <- listener.Listen(ctx)
  The metrics are exported on prometheus
  The metrics are :
 * Number of requests processed
-* Number of requests foaled
+* Number of requests failed
 * Total duration in milliseconds
 
 To activate the tracing on go-Kafka:
