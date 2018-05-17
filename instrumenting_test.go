@@ -2,7 +2,6 @@ package kafka
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/Shopify/sarama"
@@ -20,8 +19,6 @@ func Test_NewConsumerMetricsService_Should_Return_Success_When_Success(t *testin
 	handler := s.Instrumentation(h)
 
 	err := handler(context.Background(), &sarama.ConsumerMessage{Value: testEncodedMessage, Topic: "test-topic"})
-
-	fmt.Println("han ", err)
 
 	// Assert
 	assert.Nil(t, err)

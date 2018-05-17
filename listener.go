@@ -110,8 +110,7 @@ type ListenerOption func(l *listener)
 //WithInstrumenting add a instance of Prometheus metrics
 func WithInstrumenting() ListenerOption {
 	return func(l *listener) {
-		instrumenting := NewConsumerMetricsService(l.groupID)
-		l.instrumenting = &instrumenting
+		l.instrumenting = NewConsumerMetricsService(l.groupID)
 	}
 }
 
@@ -132,12 +131,12 @@ func (l *listener) Listen(consumerContext context.Context) error {
 				messageContext = context.WithValue(messageContext, contextOffsetKey, msg.Offset)
 				messageContext = context.WithValue(messageContext, contextTimestampKey, msg.Timestamp)
 
-				h := l.handlers[msg.Topic]
+				handler := l.handlers[msg.Topic]
 				if l.instrumenting != nil {
-					h = l.instrumenting.Instrumentation(h)
+					handler = l.instrumenting.Instrumentation(handler)
 				}
 
-				err := handleMessageWithRetry(messageContext, h, msg, ConsumerMaxRetries)
+				err := handleMessageWithRetry(messageContext, handler, msg, ConsumerMaxRetries)
 				if err != nil {
 					err = errors.Wrapf(err, "processing failed after %d attempts", ConsumerMaxRetries)
 					l.handleErrorMessage(messageContext, err, msg)
