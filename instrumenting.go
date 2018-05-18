@@ -18,7 +18,7 @@ type ConsumerMetricsService struct {
 // NewConsumerMetricsService creates a layer of service that add metrics capability
 func NewConsumerMetricsService(appName string) *ConsumerMetricsService {
 	var c ConsumerMetricsService
-	fieldKeys := []string{"topic", "success"}
+	fieldKeys := []string{"kafka_topic", "success"}
 
 	c.request = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
