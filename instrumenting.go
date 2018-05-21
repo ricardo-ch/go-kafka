@@ -50,8 +50,8 @@ func (c *ConsumerMetricsService) Instrumentation(next Handler) Handler {
 			if err == nil {
 				success = true
 			}
-			c.latency.WithLabelValues(msg.Topic, strconv.FormatBool(success)).Observe(time.Since(begin).Seconds() * 1e3)
-			c.request.WithLabelValues(msg.Topic).Inc()
+			c.latency.WithLabelValues(msg.Topic).Observe(time.Since(begin).Seconds() * 1e3)
+			c.request.WithLabelValues(msg.Topic, strconv.FormatBool(success)).Inc()
 		}(time.Now())
 
 		err = next(ctx, msg)
