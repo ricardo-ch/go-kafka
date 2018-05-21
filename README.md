@@ -43,9 +43,8 @@ errc <- listener.Listen(ctx)
  Currently the instrumenting is implemented only on consumer part.
  The metrics are exported on prometheus
  The metrics are :
-* Number of requests processed
-* Number of requests failed
-* Total duration in milliseconds
+* Number of requests processed (label: kafka_topic, success)
+* Total duration in milliseconds (label: kafka_topic)
 
 To activate the tracing on go-Kafka:
 
