@@ -38,7 +38,7 @@ errc <- listener.Listen(ctx)
 * Create a go-kit like server
 * Add instrumenting on Prometheus
 
-## instrumenting
+## Instrumenting
 
  Currently the instrumenting is implemented only on consumer part.
  The metrics are exported on prometheus

@@ -60,7 +60,7 @@ type Listener interface {
 
 // NewListener creates a new instance of Listener
 func NewListener(brokers []string, groupID string, handlers Handlers, options ...ListenerOption) (Listener, error) {
-	if brokers == nil || len(brokers) == 0 {
+	if len(brokers) == 0 {
 		return nil, errors.New("cannot create new listener, brokers cannot be empty")
 	}
 	if groupID == "" {

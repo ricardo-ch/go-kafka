@@ -9,10 +9,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// ConsumerMetricsService object represents consumer metrics
 type ConsumerMetricsService struct {
-	request       *prometheus.CounterVec
-	requestFailed *prometheus.CounterVec
-	latency       *prometheus.SummaryVec
+	request *prometheus.CounterVec
+	latency *prometheus.SummaryVec
 }
 
 // NewConsumerMetricsService creates a layer of service that add metrics capability
