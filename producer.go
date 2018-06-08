@@ -18,7 +18,7 @@ type Producer interface {
 
 // NewProducer creates a new instance of Producer
 func NewProducer(brokers []string) (Producer, error) {
-	if brokers == nil || len(brokers) == 0 {
+	if len(brokers) == 0 {
 		return nil, errors.New("cannot create new producer, brokers cannot be empty")
 	}
 
