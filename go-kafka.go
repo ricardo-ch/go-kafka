@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/Shopify/sarama"
-	"github.com/bsm/sarama-cluster"
+	cluster "github.com/bsm/sarama-cluster"
 )
 
 // StdLogger is used to log messages.
@@ -58,4 +58,11 @@ func init() {
 	Config.Producer.Retry.Max = 3
 	Config.Producer.Return.Successes = true
 	Config.Producer.RequiredAcks = sarama.WaitForAll
+	if os.Getenv("KAFKA_SASL_AUTH_ENABLED") == "true" {
+		Config.Net.TLS.Enable = true
+		Config.Net.SASL.Enable = true
+		Config.Net.SASL.Handshake = true
+		Config.Net.SASL.User = os.Getenv("KAFKA_SASL_USER")
+		Config.Net.SASL.Password = os.Getenv("KAFKA_SASL_PASSWORD")
+	}
 }
