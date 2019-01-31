@@ -1,3 +1,5 @@
+// from https://github.com/burdiyan/kafkautil/blob/master/partitioner.go
+// copied here to ensure this stay.
 package kafka
 
 import (
