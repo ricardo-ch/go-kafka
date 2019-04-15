@@ -108,7 +108,7 @@ func Test_NewListener_Happy_Path(t *testing.T) {
 
 	metadataResponse := new(sarama.MetadataResponse)
 	metadataResponse.AddBroker(leaderBroker.Addr(), leaderBroker.BrokerID())
-	metadataResponse.AddTopicPartition("topic-test", 0, leaderBroker.BrokerID(), nil, nil, sarama.ErrNoError)
+	metadataResponse.AddTopicPartition("topic-test", 0, leaderBroker.BrokerID(), nil, nil, nil, sarama.ErrNoError)
 	leaderBroker.Returns(metadataResponse)
 
 	consumerMetadataResponse := sarama.ConsumerMetadataResponse{
