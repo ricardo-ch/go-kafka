@@ -23,3 +23,14 @@ func Test_NewConsumerMetricsService_Should_Return_Success_When_Success(t *testin
 	// Assert
 	assert.Nil(t, err)
 }
+
+func Test_NewConsumerMetricsService_Should_Allow_Multiple_Instance(t *testing.T) {
+	// Arrange
+	group1 := "test_ok"
+	group2 := "test_ok_other"
+	s1 := NewConsumerMetricsService(group1)
+	s2 := NewConsumerMetricsService(group2)
+
+	assert.Equal(t, group1, s1.groupID)
+	assert.Equal(t, group2, s2.groupID)
+}
