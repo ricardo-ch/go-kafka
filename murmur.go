@@ -21,7 +21,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-// from https://github.com/burdiyan/kafkautil/blob/master/partitioner.go
+// Package kafka copied from https://github.com/burdiyan/kafkautil/blob/master/partitioner.go
 // copied here to ensure this stay.
 package kafka
 
