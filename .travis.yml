@@ -1,7 +1,7 @@
 language: go
 
 go:
-  - "1.10.x"
+  - "1.12.x"
 
 notifications:
  email: false
@@ -10,7 +10,7 @@ before_install:
  - go get github.com/mattn/goveralls
 
 script:
- - go get -t ./...
+ - go get -t -u ./...
  - make build
  - make test
  - $GOPATH/bin/goveralls -service=travis-ci
