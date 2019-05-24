@@ -188,7 +188,9 @@ func (l *listener) handleErrorMessage(ctx context.Context, initialError error, m
 	ErrorLogger.Printf("Consume: %+v", initialError)
 
 	// Inc dropped messages metrics
-	l.instrumenting.droppedRequest.WithLabelValues("kafka_topic", msg.Topic, "group_id", l.groupID).Inc()
+	if l.instrumenting != nil && l.instrumenting.droppedRequest != nil {
+		l.instrumenting.droppedRequest.WithLabelValues("kafka_topic", msg.Topic, "group_id", l.groupID).Inc()
+	}
 
 	// publish to dead queue if requested in config
 	if PushConsumerErrorsToTopic {
