@@ -96,9 +96,16 @@ func NewListener(brokers []string, groupID string, handlers Handlers, options ..
 		closed:   make(chan interface{}),
 	}
 
-	//execute all method passed as option
+	// execute all method passed as option
 	for _, o := range options {
 		o(l)
+	}
+
+	// initialize vec counter metric to 0 for easier query
+	for topic := range l.handlers {
+		if l.instrumenting != nil && l.instrumenting.droppedRequest != nil {
+			l.instrumenting.droppedRequest.With(map[string]string{"kafka_topic": topic, "group_id": l.groupID})
+		}
 	}
 
 	return l, nil
@@ -189,7 +196,7 @@ func (l *listener) handleErrorMessage(ctx context.Context, initialError error, m
 
 	// Inc dropped messages metrics
 	if l.instrumenting != nil && l.instrumenting.droppedRequest != nil {
-		l.instrumenting.droppedRequest.WithLabelValues("kafka_topic", msg.Topic, "group_id", l.groupID).Inc()
+		l.instrumenting.droppedRequest.With(map[string]string{"kafka_topic": msg.Topic, "group_id": l.groupID}).Inc()
 	}
 
 	// publish to dead queue if requested in config

@@ -13,3 +13,5 @@
 
 # ignore IDE
 .idea
+
+vendor
