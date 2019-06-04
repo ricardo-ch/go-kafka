@@ -184,8 +184,15 @@ func handleMessageWithRetry(ctx context.Context, handler Handler, msg *sarama.Co
 }
 
 func (l *listener) handleErrorMessage(ctx context.Context, initialError error, msg *sarama.ConsumerMessage) {
+	// Log
 	ErrorLogger.Printf("Consume: %+v", initialError)
 
+	// Inc dropped messages metrics
+	if l.instrumenting != nil && l.instrumenting.droppedRequest != nil {
+		l.instrumenting.droppedRequest.WithLabelValues("kafka_topic", msg.Topic, "group_id", l.groupID).Inc()
+	}
+
+	// publish to dead queue if requested in config
 	if PushConsumerErrorsToTopic {
 		if l.producer == nil {
 			ErrorLogger.Printf("Cannot send message to error topic: producer is nil")

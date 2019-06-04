@@ -11,35 +11,28 @@ import (
 )
 
 var (
-	request      *prometheus.CounterVec
-	latency      *prometheus.SummaryVec
-	requestMutex = &sync.Mutex{}
-	latencyMutex = &sync.Mutex{}
-	metricLabels = []string{"kafka_topic", "success", "group_id"}
+	request        *prometheus.CounterVec
+	latency        *prometheus.SummaryVec
+	droppedRequest *prometheus.CounterVec
+	metricsMutex   = &sync.Mutex{}
+	metricLabels   = []string{"kafka_topic", "success", "group_id"}
 )
-
-type prometheusSummaryVec interface {
-	WithLabelValues(lvs ...string) prometheus.Observer
-}
-
-type prometheusCounterVec interface {
-	WithLabelValues(lvs ...string) prometheus.Counter
-}
 
 // ConsumerMetricsService object represents consumer metrics
 type ConsumerMetricsService struct {
-	request prometheusCounterVec
-	latency prometheusSummaryVec
-	groupID string
+	request        *prometheus.CounterVec
+	latency        *prometheus.SummaryVec
+	droppedRequest *prometheus.CounterVec
+	groupID        string
 }
 
-func getPrometheusRequestInstrumentation() prometheusCounterVec {
+func getPrometheusRequestInstrumentation() *prometheus.CounterVec {
 	if request != nil {
 		return request
 	}
 
-	requestMutex.Lock()
-	defer requestMutex.Unlock()
+	metricsMutex.Lock()
+	defer metricsMutex.Unlock()
 	if request == nil {
 		request = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
@@ -54,13 +47,13 @@ func getPrometheusRequestInstrumentation() prometheusCounterVec {
 	return request
 }
 
-func getPrometheusLatencyInstrumentation() prometheusSummaryVec {
+func getPrometheusLatencyInstrumentation() *prometheus.SummaryVec {
 	if latency != nil {
 		return latency
 	}
 
-	latencyMutex.Lock()
-	defer latencyMutex.Unlock()
+	metricsMutex.Lock()
+	defer metricsMutex.Unlock()
 	if latency == nil {
 		latency = prometheus.NewSummaryVec(
 			prometheus.SummaryOpts{
@@ -75,6 +68,27 @@ func getPrometheusLatencyInstrumentation() prometheusSummaryVec {
 	return latency
 }
 
+func getPrometheusDroppedRequestInstrumentation() *prometheus.CounterVec {
+	if droppedRequest != nil {
+		return droppedRequest
+	}
+
+	metricsMutex.Lock()
+	defer metricsMutex.Unlock()
+	if droppedRequest == nil {
+		droppedRequest = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "kafka",
+				Subsystem: "consumer",
+				Name:      "requests_dropped_total",
+				Help:      "Number of requests dropped",
+			}, []string{"kafka_topic", "group_id"})
+		prometheus.MustRegister(droppedRequest)
+	}
+
+	return droppedRequest
+}
+
 // NewConsumerMetricsService creates a layer of service that add metrics capability
 func NewConsumerMetricsService(groupID string) *ConsumerMetricsService {
 	var c ConsumerMetricsService
@@ -82,6 +96,7 @@ func NewConsumerMetricsService(groupID string) *ConsumerMetricsService {
 
 	c.request = getPrometheusRequestInstrumentation()
 	c.latency = getPrometheusLatencyInstrumentation()
+	c.droppedRequest = getPrometheusDroppedRequestInstrumentation()
 
 	return &c
 }
