@@ -11,6 +11,8 @@ type producer struct {
 }
 
 // Producer interface used to send messages
+// DEPRECATED: now that sarama expose nice interface for its types, this interface is totally useless
+// consider using the Producer interface from sarama directly
 type Producer interface {
 	SendMessage(key []byte, msg []byte, topic string) (partition int32, offset int64, err error)
 	Close() error
@@ -22,21 +24,7 @@ func NewProducer(brokers []string) (Producer, error) {
 		return nil, errors.New("cannot create new producer, brokers cannot be empty")
 	}
 
-	p, err := sarama.NewSyncProducer(brokers, &Config.Config)
-	if err != nil {
-		return nil, err
-	}
-
-	return producer{p}, nil
-}
-
-// newProducerFromClient creates a new instance of Producer from an existing client
-func newProducerFromClient(client sarama.Client) (Producer, error) {
-	if client == nil {
-		return nil, errors.New("cannot create new producer from client, client cannot be nil")
-	}
-
-	p, err := sarama.NewSyncProducerFromClient(client)
+	p, err := sarama.NewSyncProducer(brokers, Config)
 	if err != nil {
 		return nil, err
 	}

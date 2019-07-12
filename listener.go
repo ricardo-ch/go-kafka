@@ -2,27 +2,11 @@ package kafka
 
 import (
 	"context"
+	"github.com/Shopify/sarama"
+	"github.com/pkg/errors"
 	"strings"
 	"time"
-
-	"github.com/Shopify/sarama"
-	"github.com/bsm/sarama-cluster"
-	"github.com/pkg/errors"
 )
-
-// Consumer interface to test
-type Consumer interface {
-	Messages() <-chan *sarama.ConsumerMessage
-	MarkOffset(msg *sarama.ConsumerMessage, metadata string)
-	Errors() <-chan error
-	CommitOffsets() error
-	Close() (err error)
-	Notifications() <-chan *cluster.Notification
-	HighWaterMarks() map[string]map[int32]int64
-	MarkPartitionOffset(topic string, partition int32, offset int64, metadata string)
-	MarkOffsets(s *cluster.OffsetStash)
-	Subscriptions() map[string][]int32
-}
 
 // Handler that handle received kafka messages
 type Handler func(ctx context.Context, msg *sarama.ConsumerMessage) error
@@ -31,13 +15,14 @@ type Handler func(ctx context.Context, msg *sarama.ConsumerMessage) error
 type Handlers map[string]Handler
 
 // listener object represents kafka consumer
+// Listener implement both `Listener` interface and `ConsumerGroupHandler` from sarama
 type listener struct {
-	groupID       string
-	consumer      Consumer
-	producer      Producer
+	consumerGroup sarama.ConsumerGroup
+	producer      sarama.SyncProducer
+	topics        []string
 	handlers      Handlers
+	groupID       string
 	instrumenting *ConsumerMetricsService
-	closed        chan interface{}
 }
 
 // listenerContextKey defines the key to provide in context
@@ -75,25 +60,31 @@ func NewListener(brokers []string, groupID string, handlers Handlers, options ..
 	for k := range handlers {
 		topics = append(topics, k)
 	}
-	client, err := cluster.NewClient(brokers, Config)
-	if err != nil {
-		return nil, err
-	}
-	consumer, err := cluster.NewConsumerFromClient(client, groupID, topics)
-	if err != nil {
-		return nil, err
-	}
-	producer, err := newProducerFromClient(client)
+	client, err := sarama.NewClient(brokers, Config)
 	if err != nil {
 		return nil, err
 	}
 
+	producer, err := sarama.NewSyncProducerFromClient(client)
+	if err != nil {
+		return nil, err
+	}
+
+	consumerGroup, err := sarama.NewConsumerGroupFromClient(groupID, client)
+
+	go func() {
+		err := <-consumerGroup.Errors()
+		if err != nil {
+			ErrorLogger.Println("sarama error: %s", err.Error())
+		}
+	}()
+
 	l := &listener{
-		groupID:  groupID,
-		consumer: consumer,
-		producer: producer,
-		handlers: handlers,
-		closed:   make(chan interface{}),
+		groupID:       groupID,
+		producer:      producer,
+		handlers:      handlers,
+		consumerGroup: consumerGroup,
+		topics:        topics,
 	}
 
 	// execute all method passed as option
@@ -123,71 +114,82 @@ func WithInstrumenting() ListenerOption {
 
 // Listen process incoming kafka messages with handlers configured by the listener
 func (l *listener) Listen(consumerContext context.Context) error {
-	if l.consumer == nil {
-		return errors.New("cannot subscribe. Consumer is nil")
+	if l.consumerGroup == nil {
+		return errors.New("cannot subscribe. ConsumerGroup is nil")
 	}
 
-	// Consume all channels, wait for signal to exit
+	// When a session is over, make consumer join a new session, as long as the context is not cancelled
 	for {
-		select {
-		case msg, more := <-l.consumer.Messages():
-			if more {
-				// TODO need to get context from kafka message header when feature available
-				messageContext := context.WithValue(context.Background(), contextTopicKey, msg.Topic)
-				messageContext = context.WithValue(messageContext, contextkeyKey, msg.Key)
-				messageContext = context.WithValue(messageContext, contextOffsetKey, msg.Offset)
-				messageContext = context.WithValue(messageContext, contextTimestampKey, msg.Timestamp)
-
-				handler := l.handlers[msg.Topic]
-				if l.instrumenting != nil {
-					handler = l.instrumenting.Instrumentation(handler)
-				}
-
-				err := handleMessageWithRetry(messageContext, handler, msg, ConsumerMaxRetries)
-				if err != nil {
-					err = errors.Wrapf(err, "processing failed after %d attempts", ConsumerMaxRetries)
-					l.handleErrorMessage(messageContext, err, msg)
-				}
-				l.consumer.MarkOffset(msg, "")
-			}
-		case ntf, more := <-l.consumer.Notifications():
-			if more {
-				Logger.Printf("Rebalanced: %+v", ntf)
-			}
-		case err, more := <-l.consumer.Errors():
-			if more {
-				ErrorLogger.Printf("Error: %+v", err)
-			}
-		case <-consumerContext.Done():
-			return errors.New("context canceled")
-		case <-l.closed:
-			return errors.New("Listener Closed")
+		// Consume make this consumer join the next session
+		// This block until the `session` is over. (basically until next rebalance)
+		err := l.consumerGroup.Consume(consumerContext, l.topics, l)
+		if err != nil {
+			return err
+		}
+		if err := consumerContext.Err(); err != nil {
+			// Check if context is cancelled
+			return err
 		}
 	}
 }
 
 // Close the listener and dependencies
 func (l *listener) Close() {
-	if l.consumer != nil {
-		l.consumer.Close() //this line may take a few seconds to execute
-		close(l.closed)
+	if l.consumerGroup != nil {
+		err := l.consumerGroup.Close()
+		if err != nil {
+			ErrorLogger.Printf("Error while closing sarama consumerGroup: %s", err.Error())
+		}
 	}
 }
 
-// handleMessageWithRetry call the handler function and retry if it fails
-func handleMessageWithRetry(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage, retries int) (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = errors.Errorf("Panic happened during handle of message: %v", r)
-		}
-	}()
+// The `Setup`, `Cleanup` and `ConsumeClaim` are actually implementation of ConsumerGroupHandler from sarama
+// Copied from From the sarama lib:
+//
+// ConsumerGroupHandler instances are used to handle individual topic/partition claims.
+// It also provides hooks for your consumer group session life-cycle and allow you to
+// trigger logic before or after the consume loop(s).
+//
+// PLEASE NOTE that handlers are likely be called from several goroutines concurrently,
+// ensure that all state is safely protected against race conditions.
 
-	err = handler(ctx, msg)
-	if err != nil && retries > 0 {
-		time.Sleep(DurationBeforeRetry)
-		return handleMessageWithRetry(ctx, handler, msg, retries-1)
+// Setup is run at the beginning of a new session, before ConsumeClaim
+func (l *listener) Setup(sarama.ConsumerGroupSession) error {
+	// Mark the consumer as ready
+	return nil
+}
+
+// Cleanup is run at the end of a session, once all ConsumeClaim goroutines have exited
+func (l *listener) Cleanup(sarama.ConsumerGroupSession) error {
+	return nil
+}
+
+// ConsumeClaim must start a consumer loop of ConsumerGroupClaim's Messages().
+func (l *listener) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+	for msg := range claim.Messages() {
+
+		// TODO need to get context from kafka message header when feature available
+		// TODO use session.Context here?
+		messageContext := context.WithValue(context.Background(), contextTopicKey, msg.Topic)
+		messageContext = context.WithValue(messageContext, contextkeyKey, msg.Key)
+		messageContext = context.WithValue(messageContext, contextOffsetKey, msg.Offset)
+		messageContext = context.WithValue(messageContext, contextTimestampKey, msg.Timestamp)
+
+		handler := l.handlers[msg.Topic]
+		if l.instrumenting != nil {
+			handler = l.instrumenting.Instrumentation(handler)
+		}
+
+		err := handleMessageWithRetry(messageContext, handler, msg, ConsumerMaxRetries)
+		if err != nil {
+			err = errors.Wrapf(err, "processing failed after %d attempts", ConsumerMaxRetries)
+			l.handleErrorMessage(messageContext, err, msg)
+		}
+
+		session.MarkMessage(msg, "")
 	}
-	return err
+
+	return nil
 }
 
 func (l *listener) handleErrorMessage(ctx context.Context, initialError error, msg *sarama.ConsumerMessage) {
@@ -210,9 +212,29 @@ func (l *listener) handleErrorMessage(ctx context.Context, initialError error, m
 		topicName = strings.Replace(topicName, "$$T$$", msg.Topic, 1)
 
 		// Send fee message to kafka
-		_, _, err := l.producer.SendMessage(msg.Key, msg.Value, topicName)
+		_, _, err := l.producer.SendMessage(&sarama.ProducerMessage{
+			Key:   sarama.ByteEncoder(msg.Key),
+			Value: sarama.ByteEncoder(msg.Value),
+			Topic: topicName,
+		})
 		if err != nil {
 			ErrorLogger.Printf("Cannot send message to error topic: %+v", err)
 		}
 	}
+}
+
+// handleMessageWithRetry call the handler function and retry if it fails
+func handleMessageWithRetry(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage, retries int) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.Errorf("Panic happened during handle of message: %v", r)
+		}
+	}()
+
+	err = handler(ctx, msg)
+	if err != nil && retries > 0 {
+		time.Sleep(DurationBeforeRetry)
+		return handleMessageWithRetry(ctx, handler, msg, retries-1)
+	}
+	return err
 }

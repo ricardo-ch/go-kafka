@@ -3,73 +3,12 @@ package kafka
 import (
 	"context"
 	"fmt"
-	"testing"
-	"time"
-
 	"github.com/Shopify/sarama"
-	"github.com/bsm/sarama-cluster"
+	"github.com/ricardo-ch/go-kafka/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"testing"
 )
-
-type mockConsumer struct {
-	Consumer
-	mock.Mock
-}
-
-func (c *mockConsumer) Messages() <-chan *sarama.ConsumerMessage {
-	args := c.Called()
-	return args.Get(0).(chan *sarama.ConsumerMessage)
-}
-func (c *mockConsumer) MarkOffset(msg *sarama.ConsumerMessage, metadata string) {
-	c.Called()
-}
-func (c *mockConsumer) Notifications() <-chan *cluster.Notification {
-	args := c.Called()
-	return args.Get(0).(chan *cluster.Notification)
-}
-func (c *mockConsumer) Errors() <-chan error {
-	args := c.Called()
-	return args.Get(0).(chan error)
-}
-func (c *mockConsumer) CommitOffsets() error {
-	args := c.Called()
-	return args.Error(0)
-}
-func (c *mockConsumer) Close() (err error) {
-	args := c.Called()
-	return args.Error(0)
-}
-
-type mockProducer struct {
-	mock.Mock
-}
-
-func (m *mockProducer) Close() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
-func (m *mockProducer) SendMessage(key []byte, msg []byte, topic string) (partition int32, offset int64, err error) {
-	args := m.Called(key, msg, topic)
-	return args.Get(0).(int32), args.Get(1).(int64), args.Error(2)
-}
-
-type mockLogger struct {
-	mock.Mock
-}
-
-func (m *mockLogger) Print(v ...interface{}) {
-	m.Called(v)
-}
-
-func (m *mockLogger) Printf(format string, v ...interface{}) {
-	m.Called(format, v)
-}
-
-func (m *mockLogger) Println(v ...interface{}) {
-	m.Called(v)
-}
 
 func Test_NewListener_Should_Return_Error_When_No_Broker_Provided(t *testing.T) {
 	// Arrange
@@ -130,313 +69,124 @@ func Test_NewListener_Happy_Path(t *testing.T) {
 }
 
 func Test_Listen_Happy_Path(t *testing.T) {
-	timeout := make(chan interface{})
-	go func() {
-		time.Sleep(10 * time.Second)
-		close(timeout)
-	}()
+	msgChanel := make(chan *sarama.ConsumerMessage, 1)
+	msgChanel <- &sarama.ConsumerMessage{
+		Topic: "topic-test",
+	}
+	close(msgChanel)
 
-	msgChanel := make(chan *sarama.ConsumerMessage)
-	errChanel := make(chan error)
-	notifChanel := make(chan *cluster.Notification)
+	consumerGroupClaim := &mocks.ConsumerGroupClaim{}
+	consumerGroupClaim.On("Messages").Return((<-chan *sarama.ConsumerMessage)(msgChanel))
 
-	handlerCalled := make(chan interface{}, 1)
-	offsetMarked := make(chan interface{}, 1)
+	consumerGroupSession := &mocks.ConsumerGroupSession{}
+	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
 
-	mockConsumer := &mockConsumer{}
-	mockConsumer.On("Messages").Return(msgChanel)
-	mockConsumer.On("Errors").Return(errChanel)
-	mockConsumer.On("MarkOffset").Return().Run(func(mock.Arguments) {
-		offsetMarked <- true
-	})
-	mockConsumer.On("CommitOffsets").Return(nil)
-	mockConsumer.On("Notifications").Return(notifChanel)
-
+	handlerCalled := false
 	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
-		handlerCalled <- true
+		handlerCalled = true
 		return nil
 	}
 
 	tested := listener{
-		consumer: mockConsumer,
 		handlers: map[string]Handler{"topic-test": handler},
 	}
 
-	go tested.Listen(context.Background())
-	go func() {
-		msgChanel <- &sarama.ConsumerMessage{
-			Topic: "topic-test",
-		}
-	}()
+	err := tested.ConsumeClaim(consumerGroupSession, consumerGroupClaim)
 
-	for i := 0; i < 2; i++ {
-		select {
-		case <-timeout:
-			assert.Fail(t, "timeout waiting for consumer to process message")
-		case <-handlerCalled:
-		case <-offsetMarked:
-		}
-	}
-}
-
-func Test_Listen_Message_Error_NoTopic(t *testing.T) {
-	timeout := make(chan interface{})
-	go func() {
-		time.Sleep(10 * time.Second)
-		close(timeout)
-	}()
-	msgChanel := make(chan *sarama.ConsumerMessage)
-	errChanel := make(chan error)
-	notifChanel := make(chan *cluster.Notification)
-	errorLogged := make(chan interface{}, 1)
-	offsetMarked := make(chan interface{}, 1)
-
-	mockLogger := &mockLogger{}
-	mockLogger.On("Printf", mock.Anything, mock.Anything).Return().Run(func(mock.Arguments) {
-		errorLogged <- true
-	})
-	ErrorLogger = mockLogger
-	PushConsumerErrorsToTopic = false
-	DurationBeforeRetry = 2 * time.Millisecond
-
-	mockConsumer := &mockConsumer{}
-	mockConsumer.On("Messages").Return(msgChanel)
-	mockConsumer.On("Errors").Return(errChanel)
-	mockConsumer.On("MarkOffset").Return().Run(func(mock.Arguments) {
-		offsetMarked <- true
-	})
-	mockConsumer.On("CommitOffsets").Return(nil)
-	mockConsumer.On("Notifications").Return(notifChanel)
-
-	mockProducer := &mockProducer{}
-
-	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
-		return fmt.Errorf("I want an error to be logged")
-	}
-
-	tested := listener{
-		consumer: mockConsumer,
-		producer: mockProducer,
-		handlers: map[string]Handler{"topic-test": handler},
-	}
-
-	go tested.Listen(context.Background())
-	go func() {
-		msgChanel <- &sarama.ConsumerMessage{
-			Topic: "topic-test",
-		}
-	}()
-
-	for i := 0; i < 2; i++ {
-		select {
-		case <-timeout:
-			assert.Fail(t, "timeout waiting for consumer to process message")
-		case <-errorLogged:
-		case <-offsetMarked:
-		}
-	}
-
-	mockProducer.AssertNotCalled(t, "SendMessage", mock.Anything, mock.Anything, mock.Anything)
+	assert.NoError(t, err)
+	assert.True(t, handlerCalled)
+	consumerGroupClaim.AssertExpectations(t)
+	consumerGroupSession.AssertExpectations(t)
 }
 
 func Test_Listen_Message_Error_WithErrorTopic(t *testing.T) {
-	timeout := make(chan interface{})
-	go func() {
-		time.Sleep(10 * time.Second)
-		close(timeout)
-	}()
-	msgChanel := make(chan *sarama.ConsumerMessage)
-	errChanel := make(chan error)
-	notifChanel := make(chan *cluster.Notification)
-	errorLogged := make(chan interface{}, 1)
-	messageSent := make(chan interface{}, 1)
-	offsetMarked := make(chan interface{}, 1)
-
-	mockLogger := &mockLogger{}
-	mockLogger.On("Printf", mock.Anything, mock.Anything).Return().Run(func(mock.Arguments) {
-		errorLogged <- true
-	})
-	ErrorLogger = mockLogger
 	PushConsumerErrorsToTopic = true
-	DurationBeforeRetry = 2 * time.Millisecond
 
-	mockConsumer := &mockConsumer{}
-	mockConsumer.On("Messages").Return(msgChanel)
-	mockConsumer.On("Errors").Return(errChanel)
-	mockConsumer.On("MarkOffset").Return().Run(func(mock.Arguments) {
-		offsetMarked <- true
-	})
-	mockConsumer.On("CommitOffsets").Return(nil)
-	mockConsumer.On("Notifications").Return(notifChanel)
+	msgChanel := make(chan *sarama.ConsumerMessage, 1)
+	msgChanel <- &sarama.ConsumerMessage{
+		Topic: "topic-test",
+	}
+	close(msgChanel)
 
-	mockProducer := &mockProducer{}
-	var capturedErrorTopic string
-	mockProducer.On("SendMessage", mock.Anything, mock.Anything, mock.Anything).Return(int32(0), int64(0), nil).Run(func(args mock.Arguments) {
-		capturedErrorTopic = args.Get(2).(string)
-		messageSent <- true
-	})
+	consumerGroupClaim := &mocks.ConsumerGroupClaim{}
+	consumerGroupClaim.On("Messages").Return((<-chan *sarama.ConsumerMessage)(msgChanel))
 
+	consumerGroupSession := &mocks.ConsumerGroupSession{}
+	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
+
+	producer := &mocks.SyncProducer{}
+	producer.On("SendMessage", mock.Anything).Return(int32(0), int64(0), nil)
+
+	handlerCalled := false
 	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+		handlerCalled = true
 		return fmt.Errorf("I want an error to be logged")
 	}
 
+	errorLogged := false
+	mockLogger := &mocks.StdLogger{}
+	mockLogger.On("Printf", mock.Anything, mock.Anything).Return().Run(func(mock.Arguments) {
+		errorLogged = true
+	})
+	ErrorLogger = mockLogger
+
 	tested := listener{
-		groupID:  "group",
-		consumer: mockConsumer,
-		producer: mockProducer,
 		handlers: map[string]Handler{"topic-test": handler},
+		producer: producer,
 	}
 
-	go tested.Listen(context.Background())
-	go func() {
-		msgChanel <- &sarama.ConsumerMessage{
-			Topic: "topic-test",
-		}
-	}()
+	err := tested.ConsumeClaim(consumerGroupSession, consumerGroupClaim)
 
-	for i := 0; i < 3; i++ {
-		select {
-		case <-timeout:
-			assert.Fail(t, "timeout waiting for consumer to process message")
-		case <-errorLogged:
-		case <-messageSent:
-		case <-offsetMarked:
-		}
-	}
-
-	mockProducer.AssertNumberOfCalls(t, "SendMessage", 1)
-	assert.Equal(t, "group-topic-test-error", capturedErrorTopic)
+	assert.NoError(t, err)
+	assert.True(t, handlerCalled)
+	assert.True(t, errorLogged)
+	consumerGroupClaim.AssertExpectations(t)
+	consumerGroupSession.AssertExpectations(t)
+	producer.AssertExpectations(t)
 }
 
 func Test_Listen_Message_Error_WithPanicTopic(t *testing.T) {
-	timeout := make(chan interface{})
-	go func() {
-		time.Sleep(10 * time.Second)
-		close(timeout)
-	}()
-	msgChanel := make(chan *sarama.ConsumerMessage)
-	errChanel := make(chan error)
-	notifChanel := make(chan *cluster.Notification)
-	errorLogged := make(chan interface{}, 1)
-	messageSent := make(chan interface{}, 1)
-	offsetMarked := make(chan interface{}, 1)
+	PushConsumerErrorsToTopic = true
 
-	mockLogger := &mockLogger{}
-	mockLogger.On("Printf", mock.Anything, mock.Anything).Return().Run(func(args mock.Arguments) {
-		printedError := args.Get(1).([]interface{})[0].(error)
-		assert.Contains(t, printedError.Error(), "Panic")
-		errorLogged <- true
+	msgChanel := make(chan *sarama.ConsumerMessage, 1)
+	msgChanel <- &sarama.ConsumerMessage{
+		Topic: "topic-test",
+	}
+	close(msgChanel)
+
+	consumerGroupClaim := &mocks.ConsumerGroupClaim{}
+	consumerGroupClaim.On("Messages").Return((<-chan *sarama.ConsumerMessage)(msgChanel))
+
+	consumerGroupSession := &mocks.ConsumerGroupSession{}
+	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
+
+	producer := &mocks.SyncProducer{}
+	producer.On("SendMessage", mock.Anything).Return(int32(0), int64(0), nil)
+
+	handlerCalled := false
+	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+		handlerCalled = true
+		panic("I want an error to be logged")
+	}
+
+	errorLogged := false
+	mockLogger := &mocks.StdLogger{}
+	mockLogger.On("Printf", mock.Anything, mock.Anything).Return().Run(func(mock.Arguments) {
+		errorLogged = true
 	})
 	ErrorLogger = mockLogger
-	PushConsumerErrorsToTopic = true
-	DurationBeforeRetry = 2 * time.Millisecond
-
-	mockConsumer := &mockConsumer{}
-	mockConsumer.On("Messages").Return(msgChanel)
-	mockConsumer.On("Errors").Return(errChanel)
-	mockConsumer.On("MarkOffset").Return().Run(func(mock.Arguments) {
-		offsetMarked <- true
-	})
-	mockConsumer.On("CommitOffsets").Return(nil)
-	mockConsumer.On("Notifications").Return(notifChanel)
-
-	mockProducer := &mockProducer{}
-	var capturedErrorTopic string
-	mockProducer.On("SendMessage", mock.Anything, mock.Anything, mock.Anything).Return(int32(0), int64(0), nil).Run(func(args mock.Arguments) {
-		capturedErrorTopic = args.Get(2).(string)
-		messageSent <- true
-	})
-
-	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
-		panic("Panicking, I want to it to be handle as an error")
-	}
 
 	tested := listener{
-		groupID:  "group",
-		consumer: mockConsumer,
-		producer: mockProducer,
 		handlers: map[string]Handler{"topic-test": handler},
+		producer: producer,
 	}
 
-	go tested.Listen(context.Background())
-	go func() {
-		msgChanel <- &sarama.ConsumerMessage{
-			Topic: "topic-test",
-		}
-	}()
+	err := tested.ConsumeClaim(consumerGroupSession, consumerGroupClaim)
 
-	for i := 0; i < 3; i++ {
-		select {
-		case <-timeout:
-			assert.Fail(t, "timeout waiting for consumer to process message")
-		case <-errorLogged:
-		case <-messageSent:
-		case <-offsetMarked:
-		}
-	}
-
-	mockProducer.AssertNumberOfCalls(t, "SendMessage", 1)
-	assert.Equal(t, "group-topic-test-error", capturedErrorTopic)
-}
-
-func Test_Consumer_Context_Cancel_Works(t *testing.T) {
-	timeout := time.After(10 * time.Second)
-
-	contextCanceled := make(chan interface{}, 1)
-
-	mockConsumer := &mockConsumer{}
-	mockConsumer.On("Messages").Return(make(chan *sarama.ConsumerMessage))
-	mockConsumer.On("Errors").Return(make(chan error))
-	mockConsumer.On("Notifications").Return(make(chan *cluster.Notification))
-
-	tested := listener{
-		consumer: mockConsumer,
-		closed:   make(chan interface{}),
-	}
-
-	ctx := context.Background()
-	ctx, cancelFunc := context.WithCancel(ctx)
-
-	go func() {
-		tested.Listen(ctx)
-		contextCanceled <- true
-	}()
-
-	cancelFunc()
-
-	select {
-	case <-timeout:
-		assert.Fail(t, "timeout waiting for consummer to cancel itself")
-	case <-contextCanceled:
-	}
-}
-
-func Test_Consumer_Close_Works(t *testing.T) {
-	timeout := time.After(10 * time.Second)
-
-	consumerClosed := make(chan interface{}, 1)
-
-	mockConsumer := &mockConsumer{}
-	mockConsumer.On("Messages").Return(make(chan *sarama.ConsumerMessage))
-	mockConsumer.On("Errors").Return(make(chan error))
-	mockConsumer.On("Notifications").Return(make(chan *cluster.Notification))
-	mockConsumer.On("Close").Return(nil)
-
-	tested := listener{
-		consumer: mockConsumer,
-		closed:   make(chan interface{}),
-	}
-
-	go func() {
-		tested.Listen(context.Background())
-		consumerClosed <- true
-	}()
-
-	tested.Close()
-
-	select {
-	case <-timeout:
-		assert.Fail(t, "timeout waiting for consumer to close")
-	case <-consumerClosed:
-	}
+	assert.NoError(t, err)
+	assert.True(t, handlerCalled)
+	assert.True(t, errorLogged)
+	consumerGroupClaim.AssertExpectations(t)
+	consumerGroupSession.AssertExpectations(t)
+	producer.AssertExpectations(t)
 }
