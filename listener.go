@@ -71,6 +71,9 @@ func NewListener(brokers []string, groupID string, handlers Handlers, options ..
 	}
 
 	consumerGroup, err := sarama.NewConsumerGroupFromClient(groupID, client)
+	if err != nil {
+		return nil, err
+	}
 
 	go func() {
 		err := <-consumerGroup.Errors()

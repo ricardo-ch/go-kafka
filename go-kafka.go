@@ -57,4 +57,5 @@ func init() {
 	Config.Producer.Return.Successes = true
 	Config.Producer.RequiredAcks = sarama.WaitForAll
 	Config.Producer.Partitioner = NewJVMCompatiblePartitioner
+	Config.Version = sarama.V1_1_1_0
 }

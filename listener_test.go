@@ -45,7 +45,9 @@ func Test_NewListener_Should_Return_Error_When_No_Handlers_Provided(t *testing.T
 func Test_NewListener_Happy_Path(t *testing.T) {
 	leaderBroker := sarama.NewMockBroker(t, 1)
 
-	metadataResponse := new(sarama.MetadataResponse)
+	metadataResponse := &sarama.MetadataResponse{
+		Version: 5,
+	}
 	metadataResponse.AddBroker(leaderBroker.Addr(), leaderBroker.BrokerID())
 	metadataResponse.AddTopicPartition("topic-test", 0, leaderBroker.BrokerID(), nil, nil, nil, sarama.ErrNoError)
 	leaderBroker.Returns(metadataResponse)
