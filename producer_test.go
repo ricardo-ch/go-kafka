@@ -91,12 +91,12 @@ func TestSendMessage(t *testing.T) {
 func Test_NewProducer_Return_Working_Producer(t *testing.T) {
 	leaderBroker := sarama.NewMockBroker(t, 1)
 
-	metadataResponse := new(sarama.MetadataResponse)
+	metadataResponse := &sarama.MetadataResponse{Version: 5}
 	metadataResponse.AddBroker(leaderBroker.Addr(), leaderBroker.BrokerID())
 	metadataResponse.AddTopicPartition("topic-test", 0, leaderBroker.BrokerID(), nil, nil, nil, sarama.ErrNoError)
 	leaderBroker.Returns(metadataResponse)
 
-	prodSuccess := new(sarama.ProduceResponse)
+	prodSuccess := &sarama.ProduceResponse{Version: 2}
 	prodSuccess.AddTopicPartition("topic-test", 0, sarama.ErrNoError)
 	leaderBroker.Returns(prodSuccess)
 
