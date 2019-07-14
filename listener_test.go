@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"testing"
+	"time"
 )
 
 func Test_NewListener_Should_Return_Error_When_No_Broker_Provided(t *testing.T) {
@@ -70,7 +71,7 @@ func Test_NewListener_Happy_Path(t *testing.T) {
 	assert.Nil(t, err)
 }
 
-func Test_Listen_Happy_Path(t *testing.T) {
+func Test_ConsumeClaim_Happy_Path(t *testing.T) {
 	msgChanel := make(chan *sarama.ConsumerMessage, 1)
 	msgChanel <- &sarama.ConsumerMessage{
 		Topic: "topic-test",
@@ -101,7 +102,7 @@ func Test_Listen_Happy_Path(t *testing.T) {
 	consumerGroupSession.AssertExpectations(t)
 }
 
-func Test_Listen_Message_Error_WithErrorTopic(t *testing.T) {
+func Test_ConsumeClaim_Message_Error_WithErrorTopic(t *testing.T) {
 	PushConsumerErrorsToTopic = true
 
 	msgChanel := make(chan *sarama.ConsumerMessage, 1)
@@ -147,7 +148,7 @@ func Test_Listen_Message_Error_WithErrorTopic(t *testing.T) {
 	producer.AssertExpectations(t)
 }
 
-func Test_Listen_Message_Error_WithPanicTopic(t *testing.T) {
+func Test_ConsumeClaim_Message_Error_WithPanicTopic(t *testing.T) {
 	PushConsumerErrorsToTopic = true
 
 	msgChanel := make(chan *sarama.ConsumerMessage, 1)
@@ -191,4 +192,59 @@ func Test_Listen_Message_Error_WithPanicTopic(t *testing.T) {
 	consumerGroupClaim.AssertExpectations(t)
 	consumerGroupSession.AssertExpectations(t)
 	producer.AssertExpectations(t)
+}
+
+// Test that as long as context is not canceled and not error is returned, `Consume` is called again
+// (when rebalance is called, the consumer will be part of next session)
+func Test_Listen_Happy_Path(t *testing.T) {
+	calledCounter := 0
+	consumeCalled := make(chan interface{})
+	consumerGroup := &mocks.ConsumerGroup{}
+
+	// Mimic the end of a consumerGroup session by just not blocking
+	consumerGroup.On("Consume", mock.Anything, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			calledCounter++
+			consumeCalled <- true
+			if calledCounter >= 2 {
+				time.Sleep(1000 * time.Second) // just wait
+			}
+		}).
+		Return(nil).Twice()
+
+	tested := listener{consumerGroup: consumerGroup}
+
+	// Listen() is blocking as long as there is no error or context is not canceled
+	go func() {
+		tested.Listen(context.Background())
+		assert.Fail(t, `We should have blocked on "listen", even if a consumer group session has ended`)
+	}()
+
+	// Assert that consume is called twice (2 consumer group sessions are expected)
+	<-consumeCalled
+	<-consumeCalled
+
+	consumerGroup.AssertExpectations(t)
+}
+
+// Test that when the context is canceled, as soon as the consumerGroup's session ends, `Listen` returns
+func Test_Listen_ContextCanceled(t *testing.T) {
+	consumerGroup := &mocks.ConsumerGroup{}
+
+	consumerGroup.On("Consume", mock.Anything, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			ctx := args.Get(0).(context.Context)
+			<-ctx.Done()
+		}).
+		Return(nil)
+
+	tested := listener{consumerGroup: consumerGroup}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := tested.Listen(ctx)
+
+	assert.Equal(t, context.Canceled, err)
+	consumerGroup.AssertExpectations(t)
 }
