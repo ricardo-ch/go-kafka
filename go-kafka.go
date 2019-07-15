@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/Shopify/sarama"
-	"github.com/bsm/sarama-cluster"
 )
 
 // StdLogger is used to log messages.
@@ -46,11 +45,10 @@ var PushConsumerErrorsToTopic = true
 var ErrorTopicPattern = "$$CG$$-$$T$$-error"
 
 // Config is the sarama (cluster) config used for the consumer and producer.
-var Config = cluster.NewConfig()
+var Config = sarama.NewConfig()
 
 func init() {
 	// Init config with default values
-	Config.Group.Return.Notifications = true
 	Config.Consumer.Return.Errors = true
 	Config.Consumer.Offsets.Initial = sarama.OffsetOldest
 	Config.Consumer.Offsets.Retention = 192 * time.Hour // 8 days to be above the default message retention time (7 days)
@@ -59,4 +57,5 @@ func init() {
 	Config.Producer.Return.Successes = true
 	Config.Producer.RequiredAcks = sarama.WaitForAll
 	Config.Producer.Partitioner = NewJVMCompatiblePartitioner
+	Config.Version = sarama.V1_1_1_0
 }
