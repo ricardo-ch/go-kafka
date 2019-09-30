@@ -194,6 +194,40 @@ func Test_ConsumeClaim_Message_Error_WithPanicTopic(t *testing.T) {
 	producer.AssertExpectations(t)
 }
 
+// Basically a copy paste of the happy path but with tracing
+// This test only check the tracing does not prevent the consumption
+func Test_ConsumerClaim_HappyPath_WithTracing(t *testing.T) {
+	msgChanel := make(chan *sarama.ConsumerMessage, 1)
+	msgChanel <- &sarama.ConsumerMessage{
+		Topic: "topic-test",
+	}
+	close(msgChanel)
+
+	consumerGroupClaim := &mocks.ConsumerGroupClaim{}
+	consumerGroupClaim.On("Messages").Return((<-chan *sarama.ConsumerMessage)(msgChanel))
+
+	consumerGroupSession := &mocks.ConsumerGroupSession{}
+	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
+
+	handlerCalled := false
+	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+		handlerCalled = true
+		return nil
+	}
+
+	tested := listener{
+		handlers: map[string]Handler{"topic-test": handler},
+		tracer:   DefaultTracing, // this is the important part
+	}
+
+	err := tested.ConsumeClaim(consumerGroupSession, consumerGroupClaim)
+
+	assert.NoError(t, err)
+	assert.True(t, handlerCalled)
+	consumerGroupClaim.AssertExpectations(t)
+	consumerGroupSession.AssertExpectations(t)
+}
+
 // Test that as long as context is not canceled and not error is returned, `Consume` is called again
 // (when rebalance is called, the consumer will be part of next session)
 func Test_Listen_Happy_Path(t *testing.T) {
