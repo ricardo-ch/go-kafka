@@ -178,8 +178,7 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 
 	var span opentracing.Span
 	if l.tracer != nil {
-		span, messageContext = l.
-			tracer(messageContext, msg)
+		span, messageContext = l.tracer(messageContext, msg)
 		defer span.Finish()
 	}
 
