@@ -3,6 +3,7 @@ package kafka
 import (
 	"context"
 	"github.com/Shopify/sarama"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pkg/errors"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ type listener struct {
 	handlers      Handlers
 	groupID       string
 	instrumenting *ConsumerMetricsService
+	tracer        ContextFunc
 }
 
 // listenerContextKey defines the key to provide in context
@@ -108,13 +110,6 @@ func NewListener(brokers []string, groupID string, handlers Handlers, options ..
 //ListenerOption add listener option
 type ListenerOption func(l *listener)
 
-//WithInstrumenting add a instance of Prometheus metrics
-func WithInstrumenting() ListenerOption {
-	return func(l *listener) {
-		l.instrumenting = NewConsumerMetricsService(l.groupID)
-	}
-}
-
 // Listen process incoming kafka messages with handlers configured by the listener
 func (l *listener) Listen(consumerContext context.Context) error {
 	if l.consumerGroup == nil {
@@ -170,29 +165,35 @@ func (l *listener) Cleanup(sarama.ConsumerGroupSession) error {
 // ConsumeClaim must start a consumer loop of ConsumerGroupClaim's Messages().
 func (l *listener) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	for msg := range claim.Messages() {
+		l.onNewMessage(msg, session)
+	}
+	return nil
+}
 
-		// TODO need to get context from kafka message header when feature available
-		// TODO use session.Context here?
-		messageContext := context.WithValue(context.Background(), contextTopicKey, msg.Topic)
-		messageContext = context.WithValue(messageContext, contextkeyKey, msg.Key)
-		messageContext = context.WithValue(messageContext, contextOffsetKey, msg.Offset)
-		messageContext = context.WithValue(messageContext, contextTimestampKey, msg.Timestamp)
+func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.ConsumerGroupSession) {
+	messageContext := context.WithValue(context.Background(), contextTopicKey, msg.Topic)
+	messageContext = context.WithValue(messageContext, contextkeyKey, msg.Key)
+	messageContext = context.WithValue(messageContext, contextOffsetKey, msg.Offset)
+	messageContext = context.WithValue(messageContext, contextTimestampKey, msg.Timestamp)
 
-		handler := l.handlers[msg.Topic]
-		if l.instrumenting != nil {
-			handler = l.instrumenting.Instrumentation(handler)
-		}
-
-		err := handleMessageWithRetry(messageContext, handler, msg, ConsumerMaxRetries)
-		if err != nil {
-			err = errors.Wrapf(err, "processing failed after %d attempts", ConsumerMaxRetries)
-			l.handleErrorMessage(messageContext, err, msg)
-		}
-
-		session.MarkMessage(msg, "")
+	var span opentracing.Span
+	if l.tracer != nil {
+		span, messageContext = l.tracer(messageContext)
+		defer span.Finish()
 	}
 
-	return nil
+	handler := l.handlers[msg.Topic]
+	if l.instrumenting != nil {
+		handler = l.instrumenting.Instrumentation(handler)
+	}
+
+	err := handleMessageWithRetry(messageContext, handler, msg, ConsumerMaxRetries)
+	if err != nil {
+		err = errors.Wrapf(err, "processing failed after %d attempts", ConsumerMaxRetries)
+		l.handleErrorMessage(messageContext, err, msg)
+	}
+
+	session.MarkMessage(msg, "")
 }
 
 func (l *listener) handleErrorMessage(ctx context.Context, initialError error, msg *sarama.ConsumerMessage) {
