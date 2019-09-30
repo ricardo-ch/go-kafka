@@ -15,16 +15,19 @@ func WithInstrumenting() ListenerOption {
 	}
 }
 
-// ContextFunc is used to create tracing and/or propagate the tracing context from the each messages to the go context.
-type ContextFunc func(ctx context.Context, msg *sarama.ConsumerMessage) (opentracing.Span, context.Context)
+// TracingFunc is used to create tracing and/or propagate the tracing context from the each messages to the go context.
+type TracingFunc func(ctx context.Context, msg *sarama.ConsumerMessage) (opentracing.Span, context.Context)
 
-// WithTracing accept a ContextFunc to execute before each message
-func WithTracing(tracer ContextFunc) ListenerOption {
+// WithTracing accept a TracingFunc to execute before each message
+func WithTracing(tracer TracingFunc) ListenerOption {
 	return func(l *listener) {
 		l.tracer = tracer
 	}
 }
 
+// DefaultTracing implement TracingFunc
+// It fetch opentracing headers from the kafka message headers, then create a span using the opentracing.GlobalTracer()
+// usage: `listener, err = kafka.NewListener(brokers, appName, handlers, kafka.WithTracing(kafka.DefaultTracing))`
 func DefaultTracing(ctx context.Context, msg *sarama.ConsumerMessage) (opentracing.Span, context.Context) {
 	if ctx == nil {
 		ctx = context.Background()

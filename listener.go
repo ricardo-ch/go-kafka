@@ -24,7 +24,7 @@ type listener struct {
 	handlers      Handlers
 	groupID       string
 	instrumenting *ConsumerMetricsService
-	tracer        ContextFunc
+	tracer        TracingFunc
 }
 
 // listenerContextKey defines the key to provide in context
