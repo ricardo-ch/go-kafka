@@ -8,7 +8,7 @@ import (
 	"github.com/ricardo-ch/go-tracing"
 )
 
-//WithInstrumenting add a instance of Prometheus metrics
+// WithInstrumenting adds an instance of Prometheus metrics
 func WithInstrumenting() ListenerOption {
 	return func(l *listener) {
 		l.instrumenting = NewConsumerMetricsService(l.groupID)
