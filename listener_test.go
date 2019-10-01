@@ -195,7 +195,7 @@ func Test_ConsumeClaim_Message_Error_WithPanicTopic(t *testing.T) {
 }
 
 // Basically a copy paste of the happy path but with tracing
-// This test only check the tracing does not prevent the consumption
+// This test only checks that the tracing is not preventing the consumption
 func Test_ConsumerClaim_HappyPath_WithTracing(t *testing.T) {
 	msgChanel := make(chan *sarama.ConsumerMessage, 1)
 	msgChanel <- &sarama.ConsumerMessage{
