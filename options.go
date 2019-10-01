@@ -15,7 +15,7 @@ func WithInstrumenting() ListenerOption {
 	}
 }
 
-// TracingFunc is used to create tracing and/or propagate the tracing context from the each messages to the go context.
+// TracingFunc is used to create tracing and/or propagate the tracing context from each messages to the go context.
 type TracingFunc func(ctx context.Context, msg *sarama.ConsumerMessage) (opentracing.Span, context.Context)
 
 // WithTracing accept a TracingFunc to execute before each message
