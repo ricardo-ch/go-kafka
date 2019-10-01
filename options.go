@@ -26,7 +26,7 @@ func WithTracing(tracer TracingFunc) ListenerOption {
 }
 
 // DefaultTracing implements TracingFunc
-// It fetch opentracing headers from the kafka message headers, then create a span using the opentracing.GlobalTracer()
+// It fetches opentracing headers from the kafka message headers, then creates a span using the opentracing.GlobalTracer()
 // usage: `listener, err = kafka.NewListener(brokers, appName, handlers, kafka.WithTracing(kafka.DefaultTracing))`
 func DefaultTracing(ctx context.Context, msg *sarama.ConsumerMessage) (opentracing.Span, context.Context) {
 	if ctx == nil {
