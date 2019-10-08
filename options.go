@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/Shopify/sarama"
 	"github.com/opentracing/opentracing-go"
@@ -39,4 +40,24 @@ func DefaultTracing(ctx context.Context, msg *sarama.ConsumerMessage) (opentraci
 	return tracing.ExtractFromCarrier(ctx, carrier, fmt.Sprintf("message from %s", msg.Topic),
 		&map[string]interface{}{"offset": msg.Offset, "partition": msg.Partition, "key": string(msg.Key)},
 	)
+}
+
+// GetKafkaHeadersFromContext fetch some metadata from context and returns them in format []RecordHeader
+func GetKafkaHeadersFromContext(ctx context.Context) []sarama.RecordHeader {
+	carrier := tracing.InjectIntoCarrier(ctx)
+
+	recordHeaders := make([]sarama.RecordHeader, 0, len(carrier))
+	for headerKey, headerValue := range carrier {
+		recordHeaders = append(recordHeaders, sarama.RecordHeader{Key: []byte(headerKey), Value: []byte(headerValue)})
+	}
+	return recordHeaders
+}
+
+// SerializeKafkaHeadersFromContext fetch some metadata from context and serialize it into a json map[string]string
+func SerializeKafkaHeadersFromContext(ctx context.Context) (string, error) {
+	kafkaHeaders := tracing.InjectIntoCarrier(ctx)
+	kafkaHeadersJSON, err := json.Marshal(kafkaHeaders)
+
+	return string(kafkaHeadersJSON), err
+
 }
