@@ -53,11 +53,38 @@ func GetKafkaHeadersFromContext(ctx context.Context) []sarama.RecordHeader {
 	return recordHeaders
 }
 
+// GetContextFromKafkaMessage  fetches opentracing headers from the kafka message
+func GetContextFromKafkaMessage(ctx context.Context, msg *sarama.ConsumerMessage) (opentracing.Span, context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	carrier := make(map[string]string, len(msg.Headers))
+	for _, h := range msg.Headers {
+		carrier[string(h.Key)] = string(h.Value)
+	}
+	return tracing.ExtractFromCarrier(ctx, carrier, fmt.Sprintf("message from %s", msg.Topic), nil)
+}
+
 // SerializeKafkaHeadersFromContext fetch some metadata from context and serialize it into a json map[string]string
 func SerializeKafkaHeadersFromContext(ctx context.Context) (string, error) {
 	kafkaHeaders := tracing.InjectIntoCarrier(ctx)
 	kafkaHeadersJSON, err := json.Marshal(kafkaHeaders)
 
 	return string(kafkaHeadersJSON), err
+}
 
+// DeserializeContextFromKafkaHeaders fetch some metadata from context and serialize it into a json map[string]string
+func DeserializeContextFromKafkaHeaders(ctx context.Context, kafkaheaders string) (context.Context, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var rawHeaders map[string]string
+	if err := json.Unmarshal([]byte(kafkaheaders), &rawHeaders); err != nil {
+		return nil, err
+	}
+
+	_, ctx = tracing.ExtractFromCarrier(ctx, rawHeaders, "", nil)
+
+	return ctx, nil
 }
