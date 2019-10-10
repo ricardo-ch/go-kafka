@@ -42,7 +42,7 @@ func DefaultTracing(ctx context.Context, msg *sarama.ConsumerMessage) (opentraci
 	)
 }
 
-// GetKafkaHeadersFromContext fetch some metadata from context and returns them in format []RecordHeader
+// GetKafkaHeadersFromContext fetch tracing metadata from context and returns them in format []RecordHeader
 func GetKafkaHeadersFromContext(ctx context.Context) []sarama.RecordHeader {
 	carrier := tracing.InjectIntoCarrier(ctx)
 
@@ -53,7 +53,7 @@ func GetKafkaHeadersFromContext(ctx context.Context) []sarama.RecordHeader {
 	return recordHeaders
 }
 
-// GetContextFromKafkaMessage  fetches opentracing headers from the kafka message
+// GetContextFromKafkaMessage fetches tracing headers from the kafka message
 func GetContextFromKafkaMessage(ctx context.Context, msg *sarama.ConsumerMessage) (opentracing.Span, context.Context) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -65,7 +65,7 @@ func GetContextFromKafkaMessage(ctx context.Context, msg *sarama.ConsumerMessage
 	return tracing.ExtractFromCarrier(ctx, carrier, fmt.Sprintf("message from %s", msg.Topic), nil)
 }
 
-// SerializeKafkaHeadersFromContext fetch some metadata from context and serialize it into a json map[string]string
+// SerializeKafkaHeadersFromContext fetches tracing metadata from context and serialize it into a json map[string]string
 func SerializeKafkaHeadersFromContext(ctx context.Context) (string, error) {
 	kafkaHeaders := tracing.InjectIntoCarrier(ctx)
 	kafkaHeadersJSON, err := json.Marshal(kafkaHeaders)
@@ -73,7 +73,7 @@ func SerializeKafkaHeadersFromContext(ctx context.Context) (string, error) {
 	return string(kafkaHeadersJSON), err
 }
 
-// DeserializeContextFromKafkaHeaders fetch some metadata from context and serialize it into a json map[string]string
+// DeserializeContextFromKafkaHeaders fetches tracing headers from json encoded carrier and returns the context
 func DeserializeContextFromKafkaHeaders(ctx context.Context, kafkaheaders string) (context.Context, error) {
 	if ctx == nil {
 		ctx = context.Background()
