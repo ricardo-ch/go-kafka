@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/Shopify/sarama"
 	"github.com/opentracing/opentracing-go"
@@ -39,4 +40,51 @@ func DefaultTracing(ctx context.Context, msg *sarama.ConsumerMessage) (opentraci
 	return tracing.ExtractFromCarrier(ctx, carrier, fmt.Sprintf("message from %s", msg.Topic),
 		&map[string]interface{}{"offset": msg.Offset, "partition": msg.Partition, "key": string(msg.Key)},
 	)
+}
+
+// GetKafkaHeadersFromContext fetch tracing metadata from context and returns them in format []RecordHeader
+func GetKafkaHeadersFromContext(ctx context.Context) []sarama.RecordHeader {
+	carrier := tracing.InjectIntoCarrier(ctx)
+
+	recordHeaders := make([]sarama.RecordHeader, 0, len(carrier))
+	for headerKey, headerValue := range carrier {
+		recordHeaders = append(recordHeaders, sarama.RecordHeader{Key: []byte(headerKey), Value: []byte(headerValue)})
+	}
+	return recordHeaders
+}
+
+// GetContextFromKafkaMessage fetches tracing headers from the kafka message
+func GetContextFromKafkaMessage(ctx context.Context, msg *sarama.ConsumerMessage) (opentracing.Span, context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	carrier := make(map[string]string, len(msg.Headers))
+	for _, h := range msg.Headers {
+		carrier[string(h.Key)] = string(h.Value)
+	}
+	return tracing.ExtractFromCarrier(ctx, carrier, fmt.Sprintf("message from %s", msg.Topic), nil)
+}
+
+// SerializeKafkaHeadersFromContext fetches tracing metadata from context and serialize it into a json map[string]string
+func SerializeKafkaHeadersFromContext(ctx context.Context) (string, error) {
+	kafkaHeaders := tracing.InjectIntoCarrier(ctx)
+	kafkaHeadersJSON, err := json.Marshal(kafkaHeaders)
+
+	return string(kafkaHeadersJSON), err
+}
+
+// DeserializeContextFromKafkaHeaders fetches tracing headers from json encoded carrier and returns the context
+func DeserializeContextFromKafkaHeaders(ctx context.Context, kafkaheaders string) (context.Context, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var rawHeaders map[string]string
+	if err := json.Unmarshal([]byte(kafkaheaders), &rawHeaders); err != nil {
+		return nil, err
+	}
+
+	_, ctx = tracing.ExtractFromCarrier(ctx, rawHeaders, "", nil)
+
+	return ctx, nil
 }
