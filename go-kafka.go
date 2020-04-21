@@ -51,7 +51,7 @@ func init() {
 	// Init config with default values
 	Config.Consumer.Return.Errors = true
 	Config.Consumer.Offsets.Initial = sarama.OffsetOldest
-	Config.Consumer.Offsets.Retention = 192 * time.Hour // 8 days to be above the default message retention time (7 days)
+	Config.Consumer.Offsets.Retention = 30 * 24 * time.Hour // 30 days, because we tend to increase the retention of a topic to a few weeks for practical purpose
 	Config.Producer.Timeout = 5 * time.Second
 	Config.Producer.Retry.Max = 3
 	Config.Producer.Return.Successes = true
