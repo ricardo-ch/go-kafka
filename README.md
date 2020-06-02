@@ -80,7 +80,7 @@ All this strategy can be overridden through the following config variables:
 Configuration of consumer/producer is opinionated. It aim to resolve simply problems that have taken us by surprise in the past.
 For this reason:
 - the default partioner is based on murmur2 instead of the one sarama use by default
-- offset retention is set to 8 days
+- offset retention is set to 30 days
 - initial offset is oldest
 
 ## License
