@@ -34,7 +34,7 @@ type listenerContextKey string
 
 const (
 	contextTopicKey     = listenerContextKey("topic")
-	contextkeyKey       = listenerContextKey("key")
+	contextKeyKey       = listenerContextKey("key")
 	contextOffsetKey    = listenerContextKey("offset")
 	contextTimestampKey = listenerContextKey("timestamp")
 )
@@ -171,8 +171,8 @@ func (l *listener) ConsumeClaim(session sarama.ConsumerGroupSession, claim saram
 }
 
 func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.ConsumerGroupSession) {
-	messageContext := context.WithValue(context.Background(), contextTopicKey, msg.Topic)
-	messageContext = context.WithValue(messageContext, contextkeyKey, msg.Key)
+	messageContext := context.WithValue(session.Context(), contextTopicKey, msg.Topic)
+	messageContext = context.WithValue(messageContext, contextKeyKey, msg.Key)
 	messageContext = context.WithValue(messageContext, contextOffsetKey, msg.Offset)
 	messageContext = context.WithValue(messageContext, contextTimestampKey, msg.Timestamp)
 
@@ -190,6 +190,10 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 	}
 
 	err := handleMessageWithRetry(messageContext, handler, msg, ConsumerMaxRetries)
+	if err == context.Canceled {
+		// let's try not to pollute logs, metrics and offsets
+		return
+	}
 	if err != nil {
 		err = errors.Wrapf(err, "processing failed after %d attempts", ConsumerMaxRetries)
 		l.handleErrorMessage(messageContext, err, msg)
@@ -236,10 +240,19 @@ func handleMessageWithRetry(ctx context.Context, handler Handler, msg *sarama.Co
 			err = errors.Errorf("Panic happened during handle of message: %v", r)
 		}
 	}()
+	if ctx.Err() != nil {
+		// make sure to return context.Canceled so that we know the message has not been processed
+		return ctx.Err()
+	}
 
 	err = handler(ctx, msg)
 	if err != nil && retries > 0 {
-		time.Sleep(DurationBeforeRetry)
+		// wait for back off duration or return immediately if the context is canceled.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(DurationBeforeRetry):
+		}
 		return handleMessageWithRetry(ctx, handler, msg, retries-1)
 	}
 	return err
