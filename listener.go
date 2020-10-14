@@ -165,6 +165,10 @@ func (l *listener) Cleanup(sarama.ConsumerGroupSession) error {
 // ConsumeClaim must start a consumer loop of ConsumerGroupClaim's Messages().
 func (l *listener) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	for msg := range claim.Messages() {
+		if err := session.Context().Err(); err != nil {
+			// context is cancelled, let's leave early so we can join the next rebalance session as soon as possible.
+			return err
+		}
 		l.onNewMessage(msg, session)
 	}
 	return nil
