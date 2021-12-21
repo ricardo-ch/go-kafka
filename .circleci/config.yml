@@ -2,7 +2,7 @@ version: 2.1
 orbs:
   coveralls: coveralls/coveralls@1.0.6
 jobs:
-  build-1:
+  quality-gate:
     docker:
       - image: 'circleci/golang:1.17'
     steps:
@@ -16,13 +16,15 @@ jobs:
       - run:
           name: Test
           command: make test
-      - coveralls/upload:
-          parallel: false
-          token: ${COVERALLS_REPO_TOKEN}
-
+      - run:
+          name: install coveralls
+          command: go install github.com/mattn/goveralls@latest
+      - run:
+          name: code coverage
+          command: goveralls -service=circle-ci -ignore "mocks/*" -repotoken=$COVERALLS_REPO_TOKEN
 workflows:
   version: 2
   coveralls_workflow:
     jobs:
-      - build-1:
+      - quality-gate:
           context: dev
