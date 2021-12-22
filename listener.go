@@ -175,6 +175,9 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 	messageContext = context.WithValue(messageContext, contextkeyKey, msg.Key)
 	messageContext = context.WithValue(messageContext, contextOffsetKey, msg.Offset)
 	messageContext = context.WithValue(messageContext, contextTimestampKey, msg.Timestamp)
+	for _, h := range msg.Headers {
+		messageContext = context.WithValue(messageContext, listenerContextKey(h.Key), h.Value)
+	}
 
 	var span opentracing.Span
 	if l.tracer != nil {

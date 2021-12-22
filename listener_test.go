@@ -74,7 +74,8 @@ func Test_NewListener_Happy_Path(t *testing.T) {
 func Test_ConsumeClaim_Happy_Path(t *testing.T) {
 	msgChanel := make(chan *sarama.ConsumerMessage, 1)
 	msgChanel <- &sarama.ConsumerMessage{
-		Topic: "topic-test",
+		Topic:   "topic-test",
+		Headers: []*sarama.RecordHeader{{Key: []byte("user-id"), Value: []byte("123456")}},
 	}
 	close(msgChanel)
 
@@ -85,7 +86,9 @@ func Test_ConsumeClaim_Happy_Path(t *testing.T) {
 	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
 
 	handlerCalled := false
+	var headerVal interface{}
 	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+		headerVal = ctx.Value(listenerContextKey("user-id"))
 		handlerCalled = true
 		return nil
 	}
@@ -98,6 +101,7 @@ func Test_ConsumeClaim_Happy_Path(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.True(t, handlerCalled)
+	assert.Equal(t, string(headerVal.([]byte)), "123456")
 	consumerGroupClaim.AssertExpectations(t)
 	consumerGroupSession.AssertExpectations(t)
 }
