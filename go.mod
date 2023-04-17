@@ -1,4 +1,4 @@
-module github.com/ricardo-ch/go-kafka
+module github.com/ricardo-ch/go-kafka/v2
 
 go 1.19
 

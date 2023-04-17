@@ -3,8 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+
 	"github.com/Shopify/sarama"
-	"github.com/ricardo-ch/go-kafka"
+	"github.com/ricardo-ch/go-kafka/v2"
 )
 
 func makeUserHandler(s Service) kafka.Handler {

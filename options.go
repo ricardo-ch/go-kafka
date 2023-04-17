@@ -4,15 +4,35 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
 	"github.com/Shopify/sarama"
 	"github.com/opentracing/opentracing-go"
 	"github.com/ricardo-ch/go-tracing"
 )
 
-// WithInstrumenting adds an instance of Prometheus metrics
+// WithInstrumenting adds the instrumenting layer on a listener.
 func WithInstrumenting() ListenerOption {
 	return func(l *listener) {
 		l.instrumenting = NewConsumerMetricsService(l.groupID)
+	}
+}
+
+// ProducerOption is a function that is passed to the producer constructor to configure it.
+type ProducerOption func(p *producer)
+
+// WithProducerInstrumenting adds the instrumenting layer on a producer.
+func WithProducerInstrumenting() ProducerOption {
+	return func(p *producer) {
+		p.instrumenting = NewProducerMetricsService()
+		p.handler = p.instrumenting.Instrumentation(p.handler)
+	}
+}
+
+// WithDeadletterProducerInstrumenting adds the instrumenting layer on a deadletter producer.
+func WithDeadletterProducerInstrumenting() ProducerOption {
+	return func(p *producer) {
+		p.instrumenting = NewDeadletterProducerMetricsService()
+		p.handler = p.instrumenting.DeadletterInstrumentation(p.handler)
 	}
 }
 
