@@ -1,6 +1,4 @@
 version: 2.1
-orbs:
-  coveralls: coveralls/coveralls@1.0.6
 jobs:
   quality-gate:
     docker:
@@ -16,15 +14,9 @@ jobs:
       - run:
           name: Test
           command: make test
-      - run:
-          name: install coveralls
-          command: go install github.com/mattn/goveralls@latest
-      - run:
-          name: code coverage
-          command: goveralls -service=circle-ci -ignore "mocks/*" -repotoken=$COVERALLS_REPO_TOKEN
 workflows:
   version: 2
-  coveralls_workflow:
+  quality-gate:
     jobs:
       - quality-gate:
           context: dev
