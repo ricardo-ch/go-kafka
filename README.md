@@ -57,7 +57,7 @@ _ = producer.Produce(message)
 ## Consumer error handling
 
 You can customize the error handling of the consumer.
-And if there's still an error after the 3 retries, the error is logged and pushed to a topic named like `"group-id"-"original-topic-name"-error`.
+And if there's still an error after all possible retries (3 by default), the error is logged and the faulty event can be pushed to a deadletter topic.
 
 ### Deadletter
 
@@ -67,7 +67,7 @@ This behaviour can be disabled through the `PushConsumerErrorsToTopic` property.
 PushConsumerErrorsToTopic = false
 ```
 The name of the deadletter topic is dynamically generated based on the original topic name and the consumer group.
-For example, if the original topic is `my-topic` and the consumer group is `my-consumer-group`, the deadletter topic will be `my-consumer-group-my-topic-deadletter`.
+For example, if the original topic is `my-topic` and the consumer group is `my-consumer-group`, the deadletter topic will be `my-consumer-group-my-topic-error`.
 This pattern can be overridden through the `ErrorTopicPattern` property.
 ```go
 ErrorTopicPattern = "custom-deadletter-topic"
