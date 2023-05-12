@@ -155,8 +155,8 @@ func Test_ConsumeClaim_Message_Error_WithErrorTopic(t *testing.T) {
 	ErrorLogger = mockLogger
 
 	tested := listener{
-		handlers: map[string]Handler{"topic-test": handler},
-		producer: producer,
+		handlers:           map[string]Handler{"topic-test": handler},
+		deadletterProducer: producer,
 	}
 
 	err := tested.ConsumeClaim(consumerGroupSession, consumerGroupClaim)
@@ -201,8 +201,8 @@ func Test_ConsumeClaim_Message_Error_WithPanicTopic(t *testing.T) {
 	ErrorLogger = mockLogger
 
 	tested := listener{
-		handlers: map[string]Handler{"topic-test": handler},
-		producer: producer,
+		handlers:           map[string]Handler{"topic-test": handler},
+		deadletterProducer: producer,
 	}
 
 	err := tested.ConsumeClaim(consumerGroupSession, consumerGroupClaim)

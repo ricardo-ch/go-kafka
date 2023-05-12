@@ -26,13 +26,13 @@ type Handlers map[string]Handler
 // listener object represents kafka consumer
 // Listener implement both `Listener` interface and `ConsumerGroupHandler` from sarama
 type listener struct {
-	consumerGroup sarama.ConsumerGroup
-	producer      Producer
-	topics        []string
-	handlers      Handlers
-	groupID       string
-	instrumenting *ConsumerMetricsService
-	tracer        TracingFunc
+	consumerGroup      sarama.ConsumerGroup
+	deadletterProducer Producer
+	topics             []string
+	handlers           Handlers
+	groupID            string
+	instrumenting      *ConsumerMetricsService
+	tracer             TracingFunc
 }
 
 // listenerContextKey defines the key to provide in context
@@ -90,11 +90,11 @@ func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (
 	}()
 
 	l := &listener{
-		groupID:       groupID,
-		producer:      producer,
-		handlers:      handlers,
-		consumerGroup: consumerGroup,
-		topics:        topics,
+		groupID:            groupID,
+		deadletterProducer: producer,
+		handlers:           handlers,
+		consumerGroup:      consumerGroup,
+		topics:             topics,
 	}
 
 	// execute all method passed as option
@@ -215,7 +215,7 @@ func (l *listener) handleErrorMessage(ctx context.Context, initialError error, m
 
 	// publish to dead queue if requested in config
 	if PushConsumerErrorsToTopic {
-		if l.producer == nil {
+		if l.deadletterProducer == nil {
 			ErrorLogger.Printf("Cannot send message to error topic: producer is nil")
 		}
 
@@ -224,7 +224,7 @@ func (l *listener) handleErrorMessage(ctx context.Context, initialError error, m
 		topicName = strings.Replace(topicName, "$$T$$", msg.Topic, 1)
 
 		// Send fee message to kafka
-		err := l.producer.Produce(&sarama.ProducerMessage{
+		err := l.deadletterProducer.Produce(&sarama.ProducerMessage{
 			Key:   sarama.ByteEncoder(msg.Key),
 			Value: sarama.ByteEncoder(msg.Value),
 			Topic: topicName,
