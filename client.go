@@ -13,12 +13,17 @@ var (
 )
 
 func getClient() (*sarama.Client, error) {
+	if client != nil {
+		return client, nil
+	}
+
 	clientMutex.Lock()
 	defer clientMutex.Unlock()
 
-	var c sarama.Client
-	var err error
 	if client == nil {
+		var c sarama.Client
+		var err error
+
 		if len(Brokers) == 0 {
 			return nil, errors.New("cannot create new client, Brokers must be specified")
 		}
