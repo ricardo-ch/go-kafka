@@ -4,23 +4,21 @@
 [![Coverage Status](https://coveralls.io/repos/github/ricardo-ch/go-kafka/badge.svg?branch=master)](https://coveralls.io/github/ricardo-ch/go-kafka?branch=master)
 [![Go Report Card](https://goreportcard.com/badge/github.com/ricardo-ch/go-kafka)](https://goreportcard.com/report/github.com/ricardo-ch/go-kafka)
 
-Go-kafka provides an easy way to use kafka listeners, producers and go-kit like server with only few lines of code.
-The listener is able to consume from multiple topics, and will execute a separate go-kit endpoint for each topic.
+Go-kafka provides an easy way to use kafka listeners and producers with only a few lines of code.
+The listener is able to consume from multiple topics, and will execute a separate handler for each topic.
 
 ## Quick start
 
 Simple consumer
 ```golang
-// go-kit event endpoints
-var endpointEvent1 endpoint.Endpoint
-var endpointEvent2 endpoint.Endpoint
+// topic-specific handlers
+var handler1 kafka.Handler
+var handler2 kafka.Handler
 
-// set your handlers
-myEvent1Handler := kafka.NewServer(endpointEvent1, myDecodeMethod1, nil)
-myEvent2Handler := kafka.NewServer(endpointEvent2, myDecodeMethod2, nil)
+// map your topics to their handlers
 handlers := map[string]kafka.Handler{
-    "topic-event-1": myEvent1Handler,
-    "topic-event-2": myEvent2Handler,
+    "topic-1": handler1,
+    "topic-2": handler2,
 }
 
 // define your listener
@@ -51,7 +49,6 @@ _ = producer.Produce(message)
 * Create a listener on multiple topics
 * Retry policy on message handling
 * Create a producer
-* Create a go-kit like server
 * Prometheus instrumenting
 
 ## Consumer error handling
