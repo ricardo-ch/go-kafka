@@ -34,14 +34,16 @@ func getPrometheusRecordSendInstrumentation() *prometheus.CounterVec {
 	producerMetricsMutex.Lock()
 	defer producerMetricsMutex.Unlock()
 
-	producerRecordSendCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "kafka",
-			Subsystem: "producer",
-			Name:      "record_send_total",
-			Help:      "Number of records sent",
-		}, producerMetricsLabel)
-	prometheus.MustRegister(producerRecordSendCounter)
+	if producerRecordSendCounter == nil {
+		producerRecordSendCounter = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "kafka",
+				Subsystem: "producer",
+				Name:      "record_send_total",
+				Help:      "Number of records sent",
+			}, producerMetricsLabel)
+		prometheus.MustRegister(producerRecordSendCounter)
+	}
 
 	return producerRecordSendCounter
 }
@@ -54,14 +56,16 @@ func getPrometheusDeadletterRecordSendInstrumentation() *prometheus.CounterVec {
 	producerMetricsMutex.Lock()
 	defer producerMetricsMutex.Unlock()
 
-	producerDeadletterSendCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "kafka",
-			Subsystem: "producer",
-			Name:      "dead_letter_created_total",
-			Help:      "Number of dead letter created",
-		}, producerMetricsLabel)
-	prometheus.MustRegister(producerDeadletterSendCounter)
+	if producerDeadletterSendCounter == nil {
+		producerDeadletterSendCounter = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "kafka",
+				Subsystem: "producer",
+				Name:      "dead_letter_created_total",
+				Help:      "Number of dead letter created",
+			}, producerMetricsLabel)
+		prometheus.MustRegister(producerDeadletterSendCounter)
+	}
 
 	return producerDeadletterSendCounter
 }
@@ -74,14 +78,16 @@ func getPrometheusRecordSendLatencyInstrumentation() *prometheus.HistogramVec {
 	producerMetricsMutex.Lock()
 	defer producerMetricsMutex.Unlock()
 
-	producerRecordSendLatency = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: "kafka",
-			Subsystem: "producer",
-			Name:      "record_send_latency_seconds",
-			Help:      "Latency of records sent",
-		}, producerMetricsLabel)
-	prometheus.MustRegister(producerRecordSendLatency)
+	if producerRecordSendLatency == nil {
+		producerRecordSendLatency = prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: "kafka",
+				Subsystem: "producer",
+				Name:      "record_send_latency_seconds",
+				Help:      "Latency of records sent",
+			}, producerMetricsLabel)
+		prometheus.MustRegister(producerRecordSendLatency)
+	}
 
 	return producerRecordSendLatency
 }
@@ -94,14 +100,16 @@ func getPrometheusSendErrorInstrumentation() *prometheus.CounterVec {
 	producerMetricsMutex.Lock()
 	defer producerMetricsMutex.Unlock()
 
-	producerRecordErrorCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "kafka",
-			Subsystem: "producer",
-			Name:      "record_error_total",
-			Help:      "Number of records send error",
-		}, producerMetricsLabel)
-	prometheus.MustRegister(producerRecordErrorCounter)
+	if producerRecordErrorCounter == nil {
+		producerRecordErrorCounter = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "kafka",
+				Subsystem: "producer",
+				Name:      "record_error_total",
+				Help:      "Number of records send error",
+			}, producerMetricsLabel)
+		prometheus.MustRegister(producerRecordErrorCounter)
+	}
 
 	return producerRecordErrorCounter
 }
