@@ -192,7 +192,7 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 
 	err := l.handleMessageWithRetry(messageContext, handler, msg, ConsumerMaxRetries)
 	if err != nil {
-		err = errors.Wrapf(err, "processing failed after %d attempts", ConsumerMaxRetries)
+		err = errors.Wrapf(err, "processing failed after all possible attempts")
 		l.handleErrorMessage(messageContext, err, msg)
 	}
 
