@@ -2,11 +2,19 @@ package kafka
 
 import (
 	"context"
+	"strings"
+	"time"
+
 	"github.com/Shopify/sarama"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pkg/errors"
-	"strings"
-	"time"
+
+	baseerrors "errors"
+)
+
+var (
+	ErrEventUnretriable = baseerrors.New("the event will not be retried")
+	ErrEventOmitted     = baseerrors.New("the event will be omitted")
 )
 
 // Handler that handle received kafka messages
@@ -18,13 +26,13 @@ type Handlers map[string]Handler
 // listener object represents kafka consumer
 // Listener implement both `Listener` interface and `ConsumerGroupHandler` from sarama
 type listener struct {
-	consumerGroup sarama.ConsumerGroup
-	producer      sarama.SyncProducer
-	topics        []string
-	handlers      Handlers
-	groupID       string
-	instrumenting *ConsumerMetricsService
-	tracer        TracingFunc
+	consumerGroup      sarama.ConsumerGroup
+	deadletterProducer Producer
+	topics             []string
+	handlers           Handlers
+	groupID            string
+	instrumenting      *ConsumerMetricsService
+	tracer             TracingFunc
 }
 
 // listenerContextKey defines the key to provide in context
@@ -46,14 +54,11 @@ type Listener interface {
 }
 
 // NewListener creates a new instance of Listener
-func NewListener(brokers []string, groupID string, handlers Handlers, options ...ListenerOption) (Listener, error) {
-	if len(brokers) == 0 {
-		return nil, errors.New("cannot create new listener, brokers cannot be empty")
-	}
+func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (Listener, error) {
 	if groupID == "" {
 		return nil, errors.New("cannot create new listener, groupID cannot be empty")
 	}
-	if handlers == nil || len(handlers) == 0 {
+	if len(handlers) == 0 {
 		return nil, errors.New("cannot create new listener, handlers cannot be empty")
 	}
 
@@ -62,17 +67,17 @@ func NewListener(brokers []string, groupID string, handlers Handlers, options ..
 	for k := range handlers {
 		topics = append(topics, k)
 	}
-	client, err := sarama.NewClient(brokers, Config)
+	client, err := getClient()
 	if err != nil {
 		return nil, err
 	}
 
-	producer, err := sarama.NewSyncProducerFromClient(client)
+	producer, err := NewProducer(WithDeadletterProducerInstrumenting())
 	if err != nil {
 		return nil, err
 	}
 
-	consumerGroup, err := sarama.NewConsumerGroupFromClient(groupID, client)
+	consumerGroup, err := sarama.NewConsumerGroupFromClient(groupID, *client)
 	if err != nil {
 		return nil, err
 	}
@@ -85,11 +90,11 @@ func NewListener(brokers []string, groupID string, handlers Handlers, options ..
 	}()
 
 	l := &listener{
-		groupID:       groupID,
-		producer:      producer,
-		handlers:      handlers,
-		consumerGroup: consumerGroup,
-		topics:        topics,
+		groupID:            groupID,
+		deadletterProducer: producer,
+		handlers:           handlers,
+		consumerGroup:      consumerGroup,
+		topics:             topics,
 	}
 
 	// execute all method passed as option
@@ -97,17 +102,10 @@ func NewListener(brokers []string, groupID string, handlers Handlers, options ..
 		o(l)
 	}
 
-	// initialize vec counter metric to 0 for easier query
-	for topic := range l.handlers {
-		if l.instrumenting != nil && l.instrumenting.droppedRequest != nil {
-			l.instrumenting.droppedRequest.With(map[string]string{"kafka_topic": topic, "group_id": l.groupID})
-		}
-	}
-
 	return l, nil
 }
 
-//ListenerOption add listener option
+// ListenerOption add listener option
 type ListenerOption func(l *listener)
 
 // Listen process incoming kafka messages with handlers configured by the listener
@@ -192,9 +190,9 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 		handler = l.instrumenting.Instrumentation(handler)
 	}
 
-	err := handleMessageWithRetry(messageContext, handler, msg, ConsumerMaxRetries)
+	err := l.handleMessageWithRetry(messageContext, handler, msg, ConsumerMaxRetries)
 	if err != nil {
-		err = errors.Wrapf(err, "processing failed after %d attempts", ConsumerMaxRetries)
+		err = errors.Wrapf(err, "processing failed after all possible attempts")
 		l.handleErrorMessage(messageContext, err, msg)
 	}
 
@@ -202,17 +200,22 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 }
 
 func (l *listener) handleErrorMessage(ctx context.Context, initialError error, msg *sarama.ConsumerMessage) {
+	if is(initialError, ErrEventOmitted) {
+		l.handleOmittedMessage(initialError, msg)
+		return
+	}
+
 	// Log
 	ErrorLogger.Printf("Consume: %+v", initialError)
 
 	// Inc dropped messages metrics
-	if l.instrumenting != nil && l.instrumenting.droppedRequest != nil {
-		l.instrumenting.droppedRequest.With(map[string]string{"kafka_topic": msg.Topic, "group_id": l.groupID}).Inc()
+	if l.instrumenting != nil && l.instrumenting.recordErrorCounter != nil {
+		l.instrumenting.recordErrorCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
 	}
 
 	// publish to dead queue if requested in config
 	if PushConsumerErrorsToTopic {
-		if l.producer == nil {
+		if l.deadletterProducer == nil {
 			ErrorLogger.Printf("Cannot send message to error topic: producer is nil")
 		}
 
@@ -221,7 +224,7 @@ func (l *listener) handleErrorMessage(ctx context.Context, initialError error, m
 		topicName = strings.Replace(topicName, "$$T$$", msg.Topic, 1)
 
 		// Send fee message to kafka
-		_, _, err := l.producer.SendMessage(&sarama.ProducerMessage{
+		err := l.deadletterProducer.Produce(&sarama.ProducerMessage{
 			Key:   sarama.ByteEncoder(msg.Key),
 			Value: sarama.ByteEncoder(msg.Value),
 			Topic: topicName,
@@ -232,8 +235,17 @@ func (l *listener) handleErrorMessage(ctx context.Context, initialError error, m
 	}
 }
 
+func (l *listener) handleOmittedMessage(initialError error, msg *sarama.ConsumerMessage) {
+	ErrorLogger.Printf("Omitted message: %+v", initialError)
+
+	// Inc dropped messages metrics
+	if l.instrumenting != nil && l.instrumenting.recordOmittedCounter != nil {
+		l.instrumenting.recordOmittedCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
+	}
+}
+
 // handleMessageWithRetry call the handler function and retry if it fails
-func handleMessageWithRetry(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage, retries int) (err error) {
+func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage, retries int) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = errors.Errorf("Panic happened during handle of message: %v", r)
@@ -241,9 +253,34 @@ func handleMessageWithRetry(ctx context.Context, handler Handler, msg *sarama.Co
 	}()
 
 	err = handler(ctx, msg)
-	if err != nil && retries > 0 {
+	if err != nil && shouldRetry(retries, err) {
 		time.Sleep(DurationBeforeRetry)
-		return handleMessageWithRetry(ctx, handler, msg, retries-1)
+		return l.handleMessageWithRetry(ctx, handler, msg, retries-1)
 	}
+
 	return err
+}
+
+func shouldRetry(retries int, err error) bool {
+	if retries <= 0 {
+		return false
+	}
+
+	if is(err, ErrEventOmitted, ErrEventUnretriable) {
+		return false
+	}
+
+	return true
+}
+
+// is() checks if the error is one of the targets.
+// this is achieved using a plain string comparison, as using errors.Is() would not work with some custom errors types.
+// this could be improved later, but it comes with a similar performance cost so it's not a priority for now.
+func is(err error, targets ...error) bool {
+	for _, target := range targets {
+		if strings.Contains(err.Error(), target.Error()) {
+			return true
+		}
+	}
+	return false
 }

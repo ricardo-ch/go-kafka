@@ -3,21 +3,29 @@ package kafka
 import (
 	"context"
 	"fmt"
-	"github.com/Shopify/sarama"
-	"github.com/ricardo-ch/go-kafka/mocks"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"testing"
 	"time"
+
+	"github.com/Shopify/sarama"
+	"github.com/pkg/errors"
+	"github.com/ricardo-ch/go-kafka/v2/mocks"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+)
+
+var (
+	testHandler = func(ctx context.Context, msg *sarama.ConsumerMessage) error { return nil }
 )
 
 func Test_NewListener_Should_Return_Error_When_No_Broker_Provided(t *testing.T) {
 	// Arrange
-	handlers := make(map[string]Handler)
-	var f func(context.Context, *sarama.ConsumerMessage) error
-	handlers["topic"] = f
+	handlers := map[string]Handler{"topic": testHandler}
+	groupID := "groupID"
+	Brokers = []string{}
+
 	// Act
-	l, err := NewListener([]string{}, "groupID", handlers)
+	l, err := NewListener(groupID, handlers)
+
 	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, l)
@@ -25,19 +33,27 @@ func Test_NewListener_Should_Return_Error_When_No_Broker_Provided(t *testing.T) 
 
 func Test_NewListener_Should_Return_Error_When_No_GroupID_Provided(t *testing.T) {
 	// Arrange
-	handlers := make(map[string]Handler)
-	var f func(context.Context, *sarama.ConsumerMessage) error
-	handlers["topic"] = f
+	handlers := map[string]Handler{"topic": testHandler}
+	groupID := ""
+	Brokers = []string{"localhost:9092"}
+
 	// Act
-	l, err := NewListener([]string{"broker1", "broker2"}, "", handlers)
+	l, err := NewListener(groupID, handlers)
+
 	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, l)
 }
 
 func Test_NewListener_Should_Return_Error_When_No_Handlers_Provided(t *testing.T) {
+	// Arrange
+	handlers := map[string]Handler{}
+	groupID := "groupID"
+	Brokers = []string{"localhost:9092"}
+
 	// Act
-	l, err := NewListener([]string{"broker1", "broker2"}, "groupID", nil)
+	l, err := NewListener(groupID, handlers)
+
 	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, l)
@@ -61,12 +77,10 @@ func Test_NewListener_Happy_Path(t *testing.T) {
 	}
 	leaderBroker.Returns(&consumerMetadataResponse)
 
-	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
-		return nil
-	}
+	Brokers = []string{leaderBroker.Addr()}
 
-	handlers := map[string]Handler{"topic-test": handler}
-	listener, err := NewListener([]string{leaderBroker.Addr()}, "groupID", handlers)
+	handlers := map[string]Handler{"topic-test": testHandler}
+	listener, err := NewListener("groupID", handlers)
 	assert.NotNil(t, listener)
 	assert.Nil(t, err)
 }
@@ -107,6 +121,9 @@ func Test_ConsumeClaim_Happy_Path(t *testing.T) {
 }
 
 func Test_ConsumeClaim_Message_Error_WithErrorTopic(t *testing.T) {
+	// Reduce the retry interval to speed up the test
+	DurationBeforeRetry = 1 * time.Millisecond
+
 	PushConsumerErrorsToTopic = true
 
 	msgChanel := make(chan *sarama.ConsumerMessage, 1)
@@ -121,8 +138,8 @@ func Test_ConsumeClaim_Message_Error_WithErrorTopic(t *testing.T) {
 	consumerGroupSession := &mocks.ConsumerGroupSession{}
 	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
 
-	producer := &mocks.SyncProducer{}
-	producer.On("SendMessage", mock.Anything).Return(int32(0), int64(0), nil)
+	producer := &mocks.MockProducer{}
+	producer.On("Produce", mock.Anything).Return(nil)
 
 	handlerCalled := false
 	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
@@ -138,8 +155,8 @@ func Test_ConsumeClaim_Message_Error_WithErrorTopic(t *testing.T) {
 	ErrorLogger = mockLogger
 
 	tested := listener{
-		handlers: map[string]Handler{"topic-test": handler},
-		producer: producer,
+		handlers:           map[string]Handler{"topic-test": handler},
+		deadletterProducer: producer,
 	}
 
 	err := tested.ConsumeClaim(consumerGroupSession, consumerGroupClaim)
@@ -167,8 +184,8 @@ func Test_ConsumeClaim_Message_Error_WithPanicTopic(t *testing.T) {
 	consumerGroupSession := &mocks.ConsumerGroupSession{}
 	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
 
-	producer := &mocks.SyncProducer{}
-	producer.On("SendMessage", mock.Anything).Return(int32(0), int64(0), nil)
+	producer := &mocks.MockProducer{}
+	producer.On("Produce", mock.Anything).Return(nil)
 
 	handlerCalled := false
 	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
@@ -184,8 +201,8 @@ func Test_ConsumeClaim_Message_Error_WithPanicTopic(t *testing.T) {
 	ErrorLogger = mockLogger
 
 	tested := listener{
-		handlers: map[string]Handler{"topic-test": handler},
-		producer: producer,
+		handlers:           map[string]Handler{"topic-test": handler},
+		deadletterProducer: producer,
 	}
 
 	err := tested.ConsumeClaim(consumerGroupSession, consumerGroupClaim)
@@ -196,6 +213,56 @@ func Test_ConsumeClaim_Message_Error_WithPanicTopic(t *testing.T) {
 	consumerGroupClaim.AssertExpectations(t)
 	consumerGroupSession.AssertExpectations(t)
 	producer.AssertExpectations(t)
+}
+
+func Test_handleErrorMessage_OmittedError(t *testing.T) {
+
+	omittedError := errors.New("This error should be omitted")
+
+	l := listener{}
+
+	errorLogged := false
+	mockLogger := &mocks.StdLogger{}
+	mockLogger.On("Printf", "Omitted message: %+v", mock.Anything).Return().Run(func(mock.Arguments) {
+		errorLogged = true
+	}).Once()
+	ErrorLogger = mockLogger
+
+	l.handleErrorMessage(context.Background(), errors.Wrap(ErrEventOmitted, omittedError.Error()), nil)
+
+	assert.True(t, errorLogged)
+}
+
+func Test_handleMessageWithRetry(t *testing.T) {
+
+	// Reduce the retry interval to speed up the test
+	DurationBeforeRetry = 1 * time.Millisecond
+
+	err := errors.New("This error should be retried")
+	handlerCalled := 0
+	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+		handlerCalled++
+		return err
+	}
+
+	l := listener{}
+	l.handleMessageWithRetry(context.Background(), handler, nil, 3)
+
+	assert.Equal(t, 4, handlerCalled)
+}
+
+func Test_handleMessageWithRetry_UnretriableError(t *testing.T) {
+	err := errors.New("This error should not be retried")
+	handlerCalled := 0
+	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+		handlerCalled++
+		return errors.Wrap(ErrEventUnretriable, err.Error())
+	}
+
+	l := listener{}
+	l.handleMessageWithRetry(context.Background(), handler, nil, 3)
+
+	assert.Equal(t, 1, handlerCalled)
 }
 
 // Basically a copy paste of the happy path but with tracing

@@ -9,6 +9,9 @@ import (
 	"github.com/Shopify/sarama"
 )
 
+// Brokers is the list of Kafka brokers to connect to.
+var Brokers []string
+
 // StdLogger is used to log messages.
 type StdLogger interface {
 	Print(v ...interface{})

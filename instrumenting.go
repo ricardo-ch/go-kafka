@@ -2,7 +2,6 @@ package kafka
 
 import (
 	"context"
-	"strconv"
 	"sync"
 	"time"
 
@@ -11,107 +10,131 @@ import (
 )
 
 var (
-	request        *prometheus.CounterVec
-	latency        *prometheus.SummaryVec
-	droppedRequest *prometheus.CounterVec
-	metricsMutex   = &sync.Mutex{}
-	metricLabels   = []string{"kafka_topic", "success", "group_id"}
+	consumerRecordConsumedCounter *prometheus.CounterVec
+	consumerRecordConsumedLatency *prometheus.HistogramVec
+	consumerRecordErrorCounter    *prometheus.CounterVec
+	consumerRecordOmittedCounter  *prometheus.CounterVec
+
+	consumerMetricsMutex = &sync.Mutex{}
+	consumerMetricLabels = []string{"kafka_topic", "consumer_group"}
 )
 
 // ConsumerMetricsService object represents consumer metrics
 type ConsumerMetricsService struct {
-	request        *prometheus.CounterVec
-	latency        *prometheus.SummaryVec
-	droppedRequest *prometheus.CounterVec
-	groupID        string
+	groupID string
+
+	recordConsumedCounter *prometheus.CounterVec
+	recordConsumedLatency *prometheus.HistogramVec
+	recordErrorCounter    *prometheus.CounterVec
+	recordOmittedCounter  *prometheus.CounterVec
 }
 
-func getPrometheusRequestInstrumentation() *prometheus.CounterVec {
-	if request != nil {
-		return request
+func getPrometheusRecordConsumedInstrumentation() *prometheus.CounterVec {
+	if consumerRecordConsumedCounter != nil {
+		return consumerRecordConsumedCounter
 	}
 
-	metricsMutex.Lock()
-	defer metricsMutex.Unlock()
-	if request == nil {
-		request = prometheus.NewCounterVec(
+	consumerMetricsMutex.Lock()
+	defer consumerMetricsMutex.Unlock()
+	if consumerRecordConsumedCounter == nil {
+		consumerRecordConsumedCounter = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Namespace: "kafka",
 				Subsystem: "consumer",
-				Name:      "requests_total",
-				Help:      "Number of requests processed",
-			}, metricLabels)
-		prometheus.MustRegister(request)
+				Name:      "records_consumed_total",
+				Help:      "Number of records consumed",
+			}, consumerMetricLabels)
+		prometheus.MustRegister(consumerRecordConsumedCounter)
 	}
 
-	return request
+	return consumerRecordConsumedCounter
 }
 
-func getPrometheusLatencyInstrumentation() *prometheus.SummaryVec {
-	if latency != nil {
-		return latency
+func getPrometheusRecordConsumedLatencyInstrumentation() *prometheus.HistogramVec {
+	if consumerRecordConsumedLatency != nil {
+		return consumerRecordConsumedLatency
 	}
 
-	metricsMutex.Lock()
-	defer metricsMutex.Unlock()
-	if latency == nil {
-		latency = prometheus.NewSummaryVec(
-			prometheus.SummaryOpts{
+	consumerMetricsMutex.Lock()
+	defer consumerMetricsMutex.Unlock()
+	if consumerRecordConsumedLatency == nil {
+		consumerRecordConsumedLatency = prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
 				Namespace: "kafka",
 				Subsystem: "consumer",
-				Name:      "requests_latency_milliseconds",
+				Name:      "record_consumed_latency_seconds",
 				Help:      "Total duration in milliseconds",
-			}, metricLabels)
-		prometheus.MustRegister(latency)
+			}, consumerMetricLabels)
+		prometheus.MustRegister(consumerRecordConsumedLatency)
 	}
 
-	return latency
+	return consumerRecordConsumedLatency
 }
 
-func getPrometheusDroppedRequestInstrumentation() *prometheus.CounterVec {
-	if droppedRequest != nil {
-		return droppedRequest
+func getPrometheusRecordConsumedErrorInstrumentation() *prometheus.CounterVec {
+	if consumerRecordErrorCounter != nil {
+		return consumerRecordErrorCounter
 	}
 
-	metricsMutex.Lock()
-	defer metricsMutex.Unlock()
-	if droppedRequest == nil {
-		droppedRequest = prometheus.NewCounterVec(
+	consumerMetricsMutex.Lock()
+	defer consumerMetricsMutex.Unlock()
+	if consumerRecordErrorCounter == nil {
+		consumerRecordErrorCounter = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Namespace: "kafka",
 				Subsystem: "consumer",
-				Name:      "requests_dropped_total",
+				Name:      "record_error_total",
 				Help:      "Number of requests dropped",
-			}, []string{"kafka_topic", "group_id"})
-		prometheus.MustRegister(droppedRequest)
+			}, consumerMetricLabels)
+		prometheus.MustRegister(consumerRecordErrorCounter)
 	}
 
-	return droppedRequest
+	return consumerRecordErrorCounter
+}
+
+func getPrometheusRecordOmittedInstrumentation() *prometheus.CounterVec {
+	if consumerRecordOmittedCounter != nil {
+		return consumerRecordOmittedCounter
+	}
+
+	consumerMetricsMutex.Lock()
+	defer consumerMetricsMutex.Unlock()
+	if consumerRecordOmittedCounter == nil {
+		consumerRecordOmittedCounter = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "kafka",
+				Subsystem: "consumer",
+				Name:      "record_omitted_total",
+				Help:      "Number of requests dropped",
+			}, consumerMetricLabels)
+		prometheus.MustRegister(consumerRecordOmittedCounter)
+	}
+
+	return consumerRecordOmittedCounter
 }
 
 // NewConsumerMetricsService creates a layer of service that add metrics capability
 func NewConsumerMetricsService(groupID string) *ConsumerMetricsService {
-	var c ConsumerMetricsService
-	c.groupID = groupID
-
-	c.request = getPrometheusRequestInstrumentation()
-	c.latency = getPrometheusLatencyInstrumentation()
-	c.droppedRequest = getPrometheusDroppedRequestInstrumentation()
-
-	return &c
+	return &ConsumerMetricsService{
+		groupID:               groupID,
+		recordConsumedCounter: getPrometheusRecordConsumedInstrumentation(),
+		recordConsumedLatency: getPrometheusRecordConsumedLatencyInstrumentation(),
+		recordErrorCounter:    getPrometheusRecordConsumedErrorInstrumentation(),
+		recordOmittedCounter:  getPrometheusRecordOmittedInstrumentation(),
+	}
 }
 
 // Instrumentation middleware used to add metrics
 func (c *ConsumerMetricsService) Instrumentation(next Handler) Handler {
 	return func(ctx context.Context, msg *sarama.ConsumerMessage) (err error) {
-		// add metrics to this method
 		defer func(begin time.Time) {
-			success := strconv.FormatBool(err == nil)
-			c.latency.WithLabelValues(msg.Topic, success, c.groupID).Observe(time.Since(begin).Seconds() * 1e3)
-			c.request.WithLabelValues(msg.Topic, success, c.groupID).Inc()
+			c.recordConsumedLatency.WithLabelValues(msg.Topic, c.groupID).Observe(time.Since(begin).Seconds())
 		}(time.Now())
 
 		err = next(ctx, msg)
+		if err == nil {
+			c.recordConsumedCounter.WithLabelValues(msg.Topic, c.groupID).Inc()
+		}
 		return
 	}
 }

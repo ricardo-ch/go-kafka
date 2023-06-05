@@ -2,8 +2,9 @@ package main
 
 import (
 	"context"
-	"github.com/ricardo-ch/go-kafka"
 	"log"
+
+	"github.com/ricardo-ch/go-kafka/v2"
 )
 
 var (
@@ -14,7 +15,9 @@ var (
 func main() {
 	handlers := kafka.Handlers{}
 	handlers["test-users"] = makeUserHandler(NewService())
-	listener, err := kafka.NewListener(brokers, appName, handlers)
+	kafka.Brokers = brokers
+
+	listener, err := kafka.NewListener(appName, handlers)
 	if err != nil {
 		log.Fatalln("could not initialise listener:", err)
 	}
