@@ -1,10 +1,10 @@
 package kafka
 
 import (
+	"errors"
 	"sync"
 
 	"github.com/Shopify/sarama"
-	"github.com/pkg/errors"
 )
 
 var (
