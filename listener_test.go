@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"errors"
+
 	"github.com/Shopify/sarama"
-	"github.com/pkg/errors"
 	"github.com/ricardo-ch/go-kafka/v2/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -228,7 +229,7 @@ func Test_handleErrorMessage_OmittedError(t *testing.T) {
 	}).Once()
 	ErrorLogger = mockLogger
 
-	l.handleErrorMessage(context.Background(), errors.Wrap(ErrEventOmitted, omittedError.Error()), nil)
+	l.handleErrorMessage(context.Background(), fmt.Errorf("%w: %w", omittedError, ErrEventOmitted), nil)
 
 	assert.True(t, errorLogged)
 }
@@ -256,7 +257,7 @@ func Test_handleMessageWithRetry_UnretriableError(t *testing.T) {
 	handlerCalled := 0
 	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
 		handlerCalled++
-		return errors.Wrap(ErrEventUnretriable, err.Error())
+		return fmt.Errorf("%w: %w", err, ErrEventUnretriable)
 	}
 
 	l := listener{}

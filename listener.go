@@ -2,19 +2,18 @@ package kafka
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/Shopify/sarama"
 	"github.com/opentracing/opentracing-go"
-	"github.com/pkg/errors"
-
-	baseerrors "errors"
 )
 
 var (
-	ErrEventUnretriable = baseerrors.New("the event will not be retried")
-	ErrEventOmitted     = baseerrors.New("the event will be omitted")
+	ErrEventUnretriable = errors.New("the event will not be retried")
+	ErrEventOmitted     = errors.New("the event will be omitted")
 )
 
 // Handler that handle received kafka messages
@@ -192,7 +191,7 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 
 	err := l.handleMessageWithRetry(messageContext, handler, msg, ConsumerMaxRetries)
 	if err != nil {
-		err = errors.Wrapf(err, "processing failed after all possible attempts")
+		err = fmt.Errorf("processing failed after all possible attempts attempts: %w", err)
 		l.handleErrorMessage(messageContext, err, msg)
 	}
 
@@ -200,7 +199,7 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 }
 
 func (l *listener) handleErrorMessage(ctx context.Context, initialError error, msg *sarama.ConsumerMessage) {
-	if is(initialError, ErrEventOmitted) {
+	if errors.Is(initialError, ErrEventOmitted) {
 		l.handleOmittedMessage(initialError, msg)
 		return
 	}
@@ -248,7 +247,7 @@ func (l *listener) handleOmittedMessage(initialError error, msg *sarama.Consumer
 func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage, retries int) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = errors.Errorf("Panic happened during handle of message: %v", r)
+			err = fmt.Errorf("Panic happened during handle of message: %v", r)
 		}
 	}()
 
@@ -266,21 +265,9 @@ func shouldRetry(retries int, err error) bool {
 		return false
 	}
 
-	if is(err, ErrEventOmitted, ErrEventUnretriable) {
+	if errors.Is(err, ErrEventUnretriable) || errors.Is(err, ErrEventOmitted) {
 		return false
 	}
 
 	return true
-}
-
-// is() checks if the error is one of the targets.
-// this is achieved using a plain string comparison, as using errors.Is() would not work with some custom errors types.
-// this could be improved later, but it comes with a similar performance cost so it's not a priority for now.
-func is(err error, targets ...error) bool {
-	for _, target := range targets {
-		if strings.Contains(err.Error(), target.Error()) {
-			return true
-		}
-	}
-	return false
 }
