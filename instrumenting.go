@@ -41,7 +41,7 @@ func getPrometheusRecordConsumedInstrumentation() *prometheus.CounterVec {
 			prometheus.CounterOpts{
 				Namespace: "kafka",
 				Subsystem: "consumer",
-				Name:      "records_consumed_total",
+				Name:      "record_consumed_total",
 				Help:      "Number of records consumed",
 			}, consumerMetricLabels)
 		prometheus.MustRegister(consumerRecordConsumedCounter)
@@ -62,7 +62,7 @@ func getPrometheusRecordConsumedLatencyInstrumentation() *prometheus.HistogramVe
 			prometheus.HistogramOpts{
 				Namespace: "kafka",
 				Subsystem: "consumer",
-				Name:      "record_consumed_latency_seconds",
+				Name:      "record_latency_seconds",
 				Help:      "Total duration in milliseconds",
 			}, consumerMetricLabels)
 		prometheus.MustRegister(consumerRecordConsumedLatency)
