@@ -2,7 +2,6 @@ version: 2.1
 
 orbs:
   go: circleci/go@1.7.1
-  compliance: ricardo/compliance-orb@2
   ric-orb: ricardo/ric-orb@7
 
 workflows:
