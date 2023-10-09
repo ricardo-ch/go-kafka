@@ -9,11 +9,18 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+const (
+	TimestampTypeLogAppendTime = "LogAppendTime"
+	TimestampTypeCreateTime    = "CreateTime"
+)
+
 var (
 	consumerRecordConsumedCounter *prometheus.CounterVec
 	consumerRecordConsumedLatency *prometheus.HistogramVec
 	consumerRecordErrorCounter    *prometheus.CounterVec
 	consumerRecordOmittedCounter  *prometheus.CounterVec
+
+	consumergroupCurrentMessageTimestamp *prometheus.GaugeVec
 
 	consumerMetricsMutex = &sync.Mutex{}
 	consumerMetricLabels = []string{"kafka_topic", "consumer_group"}
@@ -27,6 +34,8 @@ type ConsumerMetricsService struct {
 	recordConsumedLatency *prometheus.HistogramVec
 	recordErrorCounter    *prometheus.CounterVec
 	recordOmittedCounter  *prometheus.CounterVec
+
+	currentMessageTimestamp *prometheus.GaugeVec
 }
 
 func getPrometheusRecordConsumedInstrumentation() *prometheus.CounterVec {
@@ -113,14 +122,36 @@ func getPrometheusRecordOmittedInstrumentation() *prometheus.CounterVec {
 	return consumerRecordOmittedCounter
 }
 
+func getPrometheusCurrentMessageTimestampInstrumentation() *prometheus.GaugeVec {
+	if consumergroupCurrentMessageTimestamp != nil {
+		return consumergroupCurrentMessageTimestamp
+	}
+
+	consumerMetricsMutex.Lock()
+	defer consumerMetricsMutex.Unlock()
+	if consumergroupCurrentMessageTimestamp == nil {
+		consumergroupCurrentMessageTimestamp = prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: "kafka",
+				Subsystem: "consumergroup",
+				Name:      "current_message_timestamp",
+				Help:      "Current message timestamp",
+			}, []string{"kafka_topic", "consumer_group", "partition", "type"})
+		prometheus.MustRegister(consumergroupCurrentMessageTimestamp)
+	}
+
+	return consumergroupCurrentMessageTimestamp
+}
+
 // NewConsumerMetricsService creates a layer of service that add metrics capability
 func NewConsumerMetricsService(groupID string) *ConsumerMetricsService {
 	return &ConsumerMetricsService{
-		groupID:               groupID,
-		recordConsumedCounter: getPrometheusRecordConsumedInstrumentation(),
-		recordConsumedLatency: getPrometheusRecordConsumedLatencyInstrumentation(),
-		recordErrorCounter:    getPrometheusRecordConsumedErrorInstrumentation(),
-		recordOmittedCounter:  getPrometheusRecordOmittedInstrumentation(),
+		groupID:                 groupID,
+		recordConsumedCounter:   getPrometheusRecordConsumedInstrumentation(),
+		recordConsumedLatency:   getPrometheusRecordConsumedLatencyInstrumentation(),
+		recordErrorCounter:      getPrometheusRecordConsumedErrorInstrumentation(),
+		recordOmittedCounter:    getPrometheusRecordOmittedInstrumentation(),
+		currentMessageTimestamp: getPrometheusCurrentMessageTimestampInstrumentation(),
 	}
 }
 
@@ -134,6 +165,18 @@ func (c *ConsumerMetricsService) Instrumentation(next Handler) Handler {
 		err = next(ctx, msg)
 		if err == nil {
 			c.recordConsumedCounter.WithLabelValues(msg.Topic, c.groupID).Inc()
+
+			// If sarama sets the timestamp to the block timestamp, it means that the message was
+			// produced with the LogAppendTime timestamp type. Otherwise, it was produced with the
+			// CreateTime timestamp type.
+			// Since sarama anyways sets msg.BlockTimestamp to the block timestamp,
+			// we can compare it with msg.Timestamp to know if the message was produced with the
+			// LogAppendTime timestamp type or not.
+			timestampType := TimestampTypeLogAppendTime
+			if msg.Timestamp != msg.BlockTimestamp {
+				timestampType = TimestampTypeCreateTime
+			}
+			c.currentMessageTimestamp.WithLabelValues(msg.Topic, c.groupID, string(msg.Partition), timestampType).Set(float64(msg.Timestamp.Unix()))
 		}
 		return
 	}

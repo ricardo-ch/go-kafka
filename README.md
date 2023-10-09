@@ -111,6 +111,7 @@ The following metrics are available:
 | kafka_consumer_record_latency_seconds | kafka_topic, consumer_group | Latency of consuming a message |
 | kafka_consumer_record_omitted_total | kafka_topic, consumer_group | Number of messages omitted |
 | kafka_consumer_record_error_total | kafka_topic, consumer_group | Number of errors when consuming a message |
+| kafka_consumergroup_current_message_timestamp| kafka_topic, consumer_group, partition, type | Timestamp of the current message being processed. Type can be either of `LogAppendTime` or `CreateTime`. |
 | kafka_producer_record_send_total | kafka_topic | Number of messages sent |
 | kafka_producer_dead_letter_created_total | kafka_topic | Number of messages sent to a dead letter topic |
 | kafka_producer_record_error_total | kafka_topic | Number of errors when sending a message |
