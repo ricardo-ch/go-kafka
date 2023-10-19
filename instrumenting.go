@@ -21,6 +21,7 @@ var (
 	consumerRecordOmittedCounter  *prometheus.CounterVec
 
 	consumergroupCurrentMessageTimestamp *prometheus.GaugeVec
+	consumergroupCurrentEventTimestamp   *prometheus.GaugeVec
 
 	consumerMetricsMutex = &sync.Mutex{}
 	consumerMetricLabels = []string{"kafka_topic", "consumer_group"}
@@ -36,6 +37,7 @@ type ConsumerMetricsService struct {
 	recordOmittedCounter  *prometheus.CounterVec
 
 	currentMessageTimestamp *prometheus.GaugeVec
+	currentEventTimestamp   *prometheus.GaugeVec
 }
 
 func getPrometheusRecordConsumedInstrumentation() *prometheus.CounterVec {
@@ -143,6 +145,27 @@ func getPrometheusCurrentMessageTimestampInstrumentation() *prometheus.GaugeVec 
 	return consumergroupCurrentMessageTimestamp
 }
 
+func getPrometheusCurrentEventTimestampInstrumentation() *prometheus.GaugeVec {
+	if consumergroupCurrentEventTimestamp != nil {
+		return consumergroupCurrentEventTimestamp
+	}
+
+	consumerMetricsMutex.Lock()
+	defer consumerMetricsMutex.Unlock()
+	if consumergroupCurrentEventTimestamp == nil {
+		consumergroupCurrentEventTimestamp = prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: "kafka",
+				Subsystem: "consumergroup",
+				Name:      "current_event_timestamp",
+				Help:      "Current event timestamp",
+			}, consumerMetricLabels)
+		prometheus.MustRegister(consumergroupCurrentEventTimestamp)
+	}
+
+	return consumergroupCurrentEventTimestamp
+}
+
 // NewConsumerMetricsService creates a layer of service that add metrics capability
 func NewConsumerMetricsService(groupID string) *ConsumerMetricsService {
 	return &ConsumerMetricsService{
@@ -152,6 +175,7 @@ func NewConsumerMetricsService(groupID string) *ConsumerMetricsService {
 		recordErrorCounter:      getPrometheusRecordConsumedErrorInstrumentation(),
 		recordOmittedCounter:    getPrometheusRecordOmittedInstrumentation(),
 		currentMessageTimestamp: getPrometheusCurrentMessageTimestampInstrumentation(),
+		currentEventTimestamp:   getPrometheusCurrentEventTimestampInstrumentation(),
 	}
 }
 
