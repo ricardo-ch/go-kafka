@@ -9,7 +9,7 @@ import (
 	"errors"
 
 	"github.com/IBM/sarama"
-	"github.com/ricardo-ch/go-kafka/v2/mocks"
+	"github.com/ricardo-ch/go-kafka/v3/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )

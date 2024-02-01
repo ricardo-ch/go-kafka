@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/IBM/sarama"
-	"github.com/ricardo-ch/go-kafka/v2"
+	"github.com/ricardo-ch/go-kafka/v3"
 )
 
 func makeUserHandler(s Service) kafka.Handler {
