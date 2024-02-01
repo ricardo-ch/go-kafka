@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 
-	"github.com/ricardo-ch/go-kafka/v2"
+	"github.com/ricardo-ch/go-kafka/v3"
 )
 
 var (

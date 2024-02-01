@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/Shopify/sarama"
+	"github.com/IBM/sarama"
 )
 
 // Brokers is the list of Kafka brokers to connect to.

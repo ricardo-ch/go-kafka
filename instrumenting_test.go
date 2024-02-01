@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Shopify/sarama"
+	"github.com/IBM/sarama"
 	"github.com/stretchr/testify/assert"
 )
 
