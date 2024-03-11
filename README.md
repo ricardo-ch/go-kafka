@@ -77,6 +77,8 @@ This can be configured through the following properties:
 * `ConsumerMaxRetries`
 * `DurationBeforeRetry`
 
+If you want to achieve a blocking retry pattern (ie. continuously retrying until the event is successfully consumed), you can set `ConsumerMaxRetries` to `InfiniteRetries` (-1).
+
 If you want to **not** retry specific errors, you can wrap them in a `kafka.ErrNonRetriable` error before returning them, or return a `kafka.ErrNonRetriable` directly.
 ```go
 // This error will not be retried

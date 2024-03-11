@@ -34,6 +34,10 @@ var ErrorLogger StdLogger = log.New(os.Stderr, "[Go-Kafka] ", log.LstdFlags)
 // By default 3 times.
 var ConsumerMaxRetries = 3
 
+// InfiniteRetries is a constant to define infinite retries.
+// It is used to set the ConsumerMaxRetries to a blocking retry process.
+const InfiniteRetries = -1
+
 // DurationBeforeRetry is the duration we wait between process retries.
 // By default 2 seconds.
 var DurationBeforeRetry = 2 * time.Second

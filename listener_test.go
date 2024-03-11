@@ -235,7 +235,6 @@ func Test_handleErrorMessage_OmittedError(t *testing.T) {
 }
 
 func Test_handleMessageWithRetry(t *testing.T) {
-
 	// Reduce the retry interval to speed up the test
 	DurationBeforeRetry = 1 * time.Millisecond
 
@@ -264,6 +263,30 @@ func Test_handleMessageWithRetry_UnretriableError(t *testing.T) {
 	l.handleMessageWithRetry(context.Background(), handler, nil, 3)
 
 	assert.Equal(t, 1, handlerCalled)
+}
+
+func Test_handleMessageWithRetry_InfiniteRetries(t *testing.T) {
+	// Reduce the retry interval to speed up the test
+	DurationBeforeRetry = 1 * time.Millisecond
+
+	err := errors.New("This error should be retried")
+	handlerCalled := 0
+	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+		handlerCalled++
+
+		// We simulate an infinite retry by failing 5 times, and then succeeding,
+		// which is above the 3 retries normally expected
+		if handlerCalled < 5 {
+			return err
+		}
+		return nil
+	}
+
+	l := listener{}
+	l.handleMessageWithRetry(context.Background(), handler, nil, InfiniteRetries)
+
+	assert.Equal(t, 5, handlerCalled)
+
 }
 
 // Basically a copy paste of the happy path but with tracing
