@@ -254,14 +254,17 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 	err = handler(ctx, msg)
 	if err != nil && shouldRetry(retries, err) {
 		time.Sleep(DurationBeforeRetry)
-		return l.handleMessageWithRetry(ctx, handler, msg, retries-1)
+		if retries != InfiniteRetries {
+			retries--
+		}
+		return l.handleMessageWithRetry(ctx, handler, msg, retries)
 	}
 
 	return err
 }
 
 func shouldRetry(retries int, err error) bool {
-	if retries <= 0 {
+	if retries == 0 {
 		return false
 	}
 
