@@ -15,7 +15,13 @@ import (
 )
 
 var (
-	testHandler = func(ctx context.Context, msg *sarama.ConsumerMessage) error { return nil }
+	testHandler = Handler{
+		Processor: func(ctx context.Context, msg *sarama.ConsumerMessage) error { return nil },
+	}
+	testHandlerConfig = HandlerConfig{
+		ConsumerMaxRetries:  Ptr(3),
+		DurationBeforeRetry: Ptr(1 * time.Millisecond),
+	}
 )
 
 func Test_NewListener_Should_Return_Error_When_No_Broker_Provided(t *testing.T) {
@@ -102,10 +108,14 @@ func Test_ConsumeClaim_Happy_Path(t *testing.T) {
 
 	handlerCalled := false
 	var headerVal interface{}
-	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
 		headerVal = ctx.Value(listenerContextKey("user-id"))
 		handlerCalled = true
 		return nil
+	}
+	handler := Handler{
+		Processor: handlerProcessor,
+		Config:    testHandlerConfig,
 	}
 
 	tested := listener{
@@ -143,9 +153,13 @@ func Test_ConsumeClaim_Message_Error_WithErrorTopic(t *testing.T) {
 	producer.On("Produce", mock.Anything).Return(nil)
 
 	handlerCalled := false
-	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
 		handlerCalled = true
 		return fmt.Errorf("I want an error to be logged")
+	}
+	handler := Handler{
+		Processor: handlerProcessor,
+		Config:    testHandlerConfig,
 	}
 
 	errorLogged := false
@@ -189,9 +203,13 @@ func Test_ConsumeClaim_Message_Error_WithPanicTopic(t *testing.T) {
 	producer.On("Produce", mock.Anything).Return(nil)
 
 	handlerCalled := false
-	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
 		handlerCalled = true
 		panic("I want an error to be logged")
+	}
+	handler := Handler{
+		Processor: handlerProcessor,
+		Config:    testHandlerConfig,
 	}
 
 	errorLogged := false
@@ -240,9 +258,13 @@ func Test_handleMessageWithRetry(t *testing.T) {
 
 	err := errors.New("This error should be retried")
 	handlerCalled := 0
-	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
 		handlerCalled++
 		return err
+	}
+	handler := Handler{
+		Processor: handlerProcessor,
+		Config:    testHandlerConfig,
 	}
 
 	l := listener{}
@@ -254,9 +276,13 @@ func Test_handleMessageWithRetry(t *testing.T) {
 func Test_handleMessageWithRetry_UnretriableError(t *testing.T) {
 	err := errors.New("This error should not be retried")
 	handlerCalled := 0
-	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
 		handlerCalled++
 		return fmt.Errorf("%w: %w", err, ErrEventUnretriable)
+	}
+	handler := Handler{
+		Processor: handlerProcessor,
+		Config:    testHandlerConfig,
 	}
 
 	l := listener{}
@@ -305,9 +331,13 @@ func Test_ConsumerClaim_HappyPath_WithTracing(t *testing.T) {
 	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
 
 	handlerCalled := false
-	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
 		handlerCalled = true
 		return nil
+	}
+	handler := Handler{
+		Processor: handlerProcessor,
+		Config:    testHandlerConfig,
 	}
 
 	tested := listener{

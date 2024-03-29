@@ -16,8 +16,17 @@ var (
 	ErrEventOmitted     = errors.New("the event will be omitted")
 )
 
-// Handler that handle received kafka messages
-type Handler func(ctx context.Context, msg *sarama.ConsumerMessage) error
+type HandlerConfig struct {
+	ConsumerMaxRetries  *int
+	DurationBeforeRetry *time.Duration
+}
+
+// Handler Processor that handle received kafka messages
+// Handler Config can be used to override global configuration for a specific handler
+type Handler struct {
+	Processor func(ctx context.Context, msg *sarama.ConsumerMessage) error
+	Config    HandlerConfig
+}
 
 // Handlers defines a handler for a given topic
 type Handlers map[string]Handler
@@ -251,9 +260,9 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 		}
 	}()
 
-	err = handler(ctx, msg)
+	err = handler.Processor(ctx, msg)
 	if err != nil && shouldRetry(retries, err) {
-		time.Sleep(DurationBeforeRetry)
+		time.Sleep(*handler.Config.DurationBeforeRetry)
 		if retries != InfiniteRetries {
 			retries--
 		}
@@ -264,7 +273,7 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 }
 
 func shouldRetry(retries int, err error) bool {
-	if retries == 0 {
+	if retries <= 0 {
 		return false
 	}
 
