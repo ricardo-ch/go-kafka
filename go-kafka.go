@@ -51,6 +51,18 @@ var PushConsumerErrorsToTopic = true
 // Use $$T$$ as original topic name placeholder
 var ErrorTopicPattern = "$$CG$$-$$T$$-error"
 
+// RetryTopicPattern is the retry topic name pattern.
+// By default "consumergroup-topicname-retry"
+// Use $$CG$$ as consumer group placeholder
+// Use $$T$$ as original topic name placeholder
+var RetryTopicPattern = "$$CG$$-$$T$$-retry"
+
+// DeadletterTopicPattern is the deadletter topic name pattern.
+// By default "consumergroup-topicname-deadletter"
+// Use $$CG$$ as consumer group placeholder
+// Use $$T$$ as original topic name placeholder
+var DeadletterTopicPattern = "$$CG$$-$$T$$-deadletter"
+
 // Config is the sarama (cluster) config used for the consumer and producer.
 var Config = sarama.NewConfig()
 

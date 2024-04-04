@@ -19,6 +19,8 @@ var (
 type HandlerConfig struct {
 	ConsumerMaxRetries  *int
 	DurationBeforeRetry *time.Duration
+	RetryTopic          string
+	DeadletterTopic     string
 }
 
 // Handler Processor that handle received kafka messages
@@ -201,13 +203,13 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 	err := l.handleMessageWithRetry(messageContext, handler, msg, ConsumerMaxRetries)
 	if err != nil {
 		err = fmt.Errorf("processing failed after all possible attempts attempts: %w", err)
-		l.handleErrorMessage(messageContext, err, msg)
+		l.handleErrorMessage(messageContext, err, handler, msg)
 	}
 
 	session.MarkMessage(msg, "")
 }
 
-func (l *listener) handleErrorMessage(ctx context.Context, initialError error, msg *sarama.ConsumerMessage) {
+func (l *listener) handleErrorMessage(ctx context.Context, initialError error, handler Handler, msg *sarama.ConsumerMessage) {
 	if errors.Is(initialError, ErrEventOmitted) {
 		l.handleOmittedMessage(initialError, msg)
 		return
@@ -221,26 +223,66 @@ func (l *listener) handleErrorMessage(ctx context.Context, initialError error, m
 		l.instrumenting.recordErrorCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
 	}
 
-	// publish to dead queue if requested in config
-	if PushConsumerErrorsToTopic {
-		if l.deadletterProducer == nil {
-			ErrorLogger.Printf("Cannot send message to error topic: producer is nil")
+	if isRetriableError(initialError) {
+		// First, check if handler's config defines retry topic
+		if handler.Config.RetryTopic != "" {
+			err := forwardToTopic(l, msg, handler.Config.RetryTopic)
+			if err != nil {
+				ErrorLogger.Printf("Cannot send message to error topic: %+v", err)
+			}
+			return
 		}
 
-		topicName := ErrorTopicPattern
-		topicName = strings.Replace(topicName, "$$CG$$", l.groupID, 1)
-		topicName = strings.Replace(topicName, "$$T$$", msg.Topic, 1)
+		// If not, check if global retry topic pattern is defined
+		if PushConsumerErrorsToTopic {
+			topicName := l.deduceTopicNameFromPattern(msg, RetryTopicPattern)
+			err := forwardToTopic(l, msg, topicName)
+			if err != nil {
+				ErrorLogger.Printf("Cannot send message to error topic: %+v", err)
+			}
+			return
+		}
+	}
+	// If the error is not retriable, or if there is no retry topic defined at all, then try to send to dead letter topic
 
-		// Send fee message to kafka
-		err := l.deadletterProducer.Produce(&sarama.ProducerMessage{
-			Key:   sarama.ByteEncoder(msg.Key),
-			Value: sarama.ByteEncoder(msg.Value),
-			Topic: topicName,
-		})
+	// First, check if handler's config defines deadletter topic
+	if handler.Config.DeadletterTopic != "" {
+		err := forwardToTopic(l, msg, handler.Config.DeadletterTopic)
 		if err != nil {
 			ErrorLogger.Printf("Cannot send message to error topic: %+v", err)
 		}
+		return
 	}
+
+	// If not, check if global deadletter topic pattern is defined
+	if PushConsumerErrorsToTopic {
+		topicName := l.deduceTopicNameFromPattern(msg, DeadletterTopicPattern)
+		err := forwardToTopic(l, msg, topicName)
+		if err != nil {
+			ErrorLogger.Printf("Cannot send message to error topic: %+v", err)
+		}
+		return
+	}
+}
+
+func (l *listener) deduceTopicNameFromPattern(msg *sarama.ConsumerMessage, pattern string) string {
+	topicName := pattern
+	topicName = strings.Replace(topicName, "$$CG$$", l.groupID, 1)
+	topicName = strings.Replace(topicName, "$$T$$", msg.Topic, 1)
+	return topicName
+}
+
+func forwardToTopic(l *listener, msg *sarama.ConsumerMessage, topicName string) error {
+	err := l.deadletterProducer.Produce(&sarama.ProducerMessage{
+		Key:   sarama.ByteEncoder(msg.Key),
+		Value: sarama.ByteEncoder(msg.Value),
+		Topic: topicName,
+	})
+	return err
+}
+
+func isRetriableError(initialError error) bool {
+	return !errors.Is(initialError, ErrEventUnretriable) && !errors.Is(initialError, ErrEventOmitted)
 }
 
 func (l *listener) handleOmittedMessage(initialError error, msg *sarama.ConsumerMessage) {

@@ -247,7 +247,7 @@ func Test_handleErrorMessage_OmittedError(t *testing.T) {
 	}).Once()
 	ErrorLogger = mockLogger
 
-	l.handleErrorMessage(context.Background(), fmt.Errorf("%w: %w", omittedError, ErrEventOmitted), nil)
+	l.handleErrorMessage(context.Background(), fmt.Errorf("%w: %w", omittedError, ErrEventOmitted), Handler{}, nil)
 
 	assert.True(t, errorLogged)
 }
