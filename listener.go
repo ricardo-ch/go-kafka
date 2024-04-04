@@ -99,6 +99,15 @@ func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (
 		}
 	}()
 
+	// Fill handler config unset elements with global default values.
+	fillHandlerConfigWithDefault(handlers)
+
+	// Sanity check for error topic infinite loop
+	err = checkErrorTopicInfiniteLoop(handlers)
+	if err != nil {
+		return nil, err
+	}
+
 	l := &listener{
 		groupID:            groupID,
 		deadletterProducer: producer,
@@ -113,6 +122,34 @@ func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (
 	}
 
 	return l, nil
+}
+
+func checkErrorTopicInfiniteLoop(handlers Handlers) error {
+	for topic, handler := range handlers {
+		if handler.Config.RetryTopic == topic {
+			return fmt.Errorf("Retry topic cannot be the same as the original topic: %s", topic)
+		}
+		if handler.Config.DeadletterTopic == topic {
+			return fmt.Errorf("Deadletter topic cannot be the same as the original topic: %s", topic)
+		}
+	}
+	return nil
+}
+
+func fillHandlerConfigWithDefault(handlers Handlers) {
+	for k, h := range handlers {
+		if h.Config.ConsumerMaxRetries == nil {
+			h.Config.ConsumerMaxRetries = &ConsumerMaxRetries
+		}
+		if h.Config.DurationBeforeRetry == nil {
+			h.Config.DurationBeforeRetry = &DurationBeforeRetry
+		}
+		handlers[k] = h
+	}
+}
+
+func Ptr[T any](v T) *T {
+	return &v
 }
 
 // ListenerOption add listener option
