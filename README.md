@@ -56,6 +56,41 @@ _ = producer.Produce(message)
 You can customize the error handling of the consumer.
 And if there's still an error after all possible retries (3 by default), the error is logged and the faulty event can be pushed to a deadletter topic.
 
+Here is the overall logic applied to handle errors:
+```mermaid
+stateDiagram-v2
+
+init: Error processing an event
+state is_omitable_err <<choice>>
+skipWithoutCounting: Skip the event without impacting counters
+state is_retriable_err <<choice>>
+state is_deadletter_configured <<choice>>
+skip: Skip the event
+forwardDL: Forward to deadletter topic
+state should_retry <<choice>>
+blocking_retry : Blocking Retry of this event
+state is_retry_topic_configured <<choice>>
+state is_deadletter_configured2 <<choice>>
+forwardRQ: Forward to Retry topic
+skip2: Skip the event
+defaultDL: Forward to Deadletter topic
+
+init --> is_omitable_err
+is_omitable_err --> skipWithoutCounting: Error is of type ErrEventOmitted
+is_omitable_err --> is_retriable_err: Error is not an ErrEventOmitted
+is_retriable_err --> is_deadletter_configured: Error is of type ErrEventUnretriable
+is_retriable_err --> should_retry: Error is retriable
+should_retry --> blocking_retry: There are some retries left
+should_retry --> is_retry_topic_configured : No more blocking retry
+is_deadletter_configured --> skip: No Deadletter topic configured
+is_deadletter_configured --> forwardDL: Deadletter topic configured
+is_retry_topic_configured --> forwardRQ: Retry Topic Configured
+is_retry_topic_configured --> is_deadletter_configured2: No Retry Topic Configured
+is_deadletter_configured2 --> skip2: No Deadletter topic configured
+is_deadletter_configured2 --> defaultDL: Deadletter topic configured 
+
+```
+
 ### Deadletter
 
 By default, events that have exceeded the maximum number of retries will be pushed to a dead letter topic.
