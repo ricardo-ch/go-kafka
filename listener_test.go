@@ -422,7 +422,7 @@ func Test_handleMessageWithRetry_InfiniteRetries(t *testing.T) {
 
 	err := errors.New("This error should be retried")
 	handlerCalled := 0
-	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
 		handlerCalled++
 
 		// We simulate an infinite retry by failing 5 times, and then succeeding,
@@ -431,6 +431,11 @@ func Test_handleMessageWithRetry_InfiniteRetries(t *testing.T) {
 			return err
 		}
 		return nil
+	}
+
+	handler := Handler{
+		Processor: handlerProcessor,
+		Config:    testHandlerConfig,
 	}
 
 	l := listener{}

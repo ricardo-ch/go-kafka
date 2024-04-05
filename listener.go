@@ -352,7 +352,7 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 }
 
 func shouldRetry(retries int, err error) bool {
-	if retries <= 0 {
+	if retries == 0 {
 		return false
 	}
 
