@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/Shopify/sarama"
+	"github.com/IBM/sarama"
 	"github.com/opentracing/opentracing-go"
 	"github.com/ricardo-ch/go-tracing"
 )
