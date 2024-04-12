@@ -45,12 +45,6 @@ var DurationBeforeRetry = 2 * time.Second
 // PushConsumerErrorsToTopic is a boolean to define if messages in error have to be pushed to an error topic.
 var PushConsumerErrorsToTopic = true
 
-// ErrorTopicPattern is the error topic name pattern.
-// By default "consumergroup-topicname-error"
-// Use $$CG$$ as consumer group placeholder
-// Use $$T$$ as original topic name placeholder
-var ErrorTopicPattern = "$$CG$$-$$T$$-error"
-
 // RetryTopicPattern is the retry topic name pattern.
 // By default "consumergroup-topicname-retry"
 // Use $$CG$$ as consumer group placeholder
