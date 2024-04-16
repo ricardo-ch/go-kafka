@@ -10,6 +10,7 @@ The listener is able to consume from multiple topics, and will execute a separat
 > 📘 Important note for v3 upgrade:
 > - The library now relies on the IBM/sarama library instead of Shopify/sarama, which is no longer maintained.
 > - The `kafka.Handler` type has been changed to a struct containing both the function to execute and the handler's optional configuration.
+> - The global variable `PushConsumerErrorsToTopic` has been replaced by the `PushConsumerErrorsToRetryTopic` and `PushConsumerErrorsToDeadletterTopic` properties on the handler.
 >
 > These two changes should be the only breaking changes in the v3 release. The rest of the library should be compatible with the previous version. 
 
@@ -130,17 +131,18 @@ return kafka.ErrNonRetriable
 
 ### Deadletter And Retry topics
 
-By default, events that have exceeded the maximum number of blocking retries will be pushed to a dead letter topic.
-This behaviour can be disabled through the `PushConsumerErrorsToTopic` property.
+By default, events that have exceeded the maximum number of blocking retries will be pushed to a retry topic or dead letter topic.
+This behaviour can be disabled through the `PushConsumerErrorsToRetryTopic` and `PushConsumerErrorsToDeadletterTopic` properties.
 ```go
-PushConsumerErrorsToTopic = false
+PushConsumerErrorsToRetryTopic = false
+PushConsumerErrorsToDeadletterTopic = false
 ```
-The name of the deadletter and retry topics are dynamically generated based on the original topic name and the consumer group.
+If these switches are ON, the names of the deadletter and retry topics are dynamically generated based on the original topic name and the consumer group.
 For example, if the original topic is `my-topic` and the consumer group is `my-consumer-group`, the deadletter topic will be `my-consumer-group-my-topic-deadletter`.
 This pattern can be overridden through the `ErrorTopicPattern` property.
 Also, the retry and deadletter topics name can be overridden through the `RetryTopic` and `DeadLetterTopic` properties on the handler.
 
-Note that, if global `PushConsumerErrorsToTopic` property is false, but you configure `RetryTopic` or `DeadLetterTopic` properties on a handler, then the events in error will be forwarder to the error topics only for this handler.
+Note that, if global `PushConsumerErrorsToRetryTopic` or `PushConsumerErrorsToDeadletterTopic` property are false, but you configure `RetryTopic` or `DeadLetterTopic` properties on a handler, then the events in error will be forwarder to the error topics only for this handler.
 
 ### Omitting specific errors
 

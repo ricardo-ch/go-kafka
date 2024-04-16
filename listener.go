@@ -272,7 +272,7 @@ func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *
 		}
 
 		// If not, check if global retry topic pattern is defined
-		if PushConsumerErrorsToTopic {
+		if PushConsumerErrorsToRetryTopic {
 			topicName := l.deduceTopicNameFromPattern(msg.Topic, RetryTopicPattern)
 			Logger.Printf("Sending message to retry topic: %s", topicName)
 			err := forwardToTopic(l, msg, topicName)
@@ -282,8 +282,8 @@ func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *
 			return
 		}
 	}
-	// If the error is not retriable, or if there is no retry topic defined at all, then try to send to dead letter topic
 
+	// If the error is not retriable, or if there is no retry topic defined at all, then try to send to dead letter topic
 	// First, check if handler's config defines deadletter topic
 	if handler.Config.DeadletterTopic != "" {
 		Logger.Printf("Sending message to handler's deadletter topic: %s", handler.Config.DeadletterTopic)
@@ -295,7 +295,7 @@ func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *
 	}
 
 	// If not, check if global deadletter topic pattern is defined
-	if PushConsumerErrorsToTopic {
+	if PushConsumerErrorsToDeadletterTopic {
 		topicName := l.deduceTopicNameFromPattern(msg.Topic, DeadletterTopicPattern)
 		Logger.Printf("Sending message to deadletter topic: %s", topicName)
 		err := forwardToTopic(l, msg, topicName)

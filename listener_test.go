@@ -203,7 +203,7 @@ func Test_ConsumeClaim_Message_Error_WithErrorTopic(t *testing.T) {
 	// Reduce the retry interval to speed up the test
 	DurationBeforeRetry = 1 * time.Millisecond
 
-	PushConsumerErrorsToTopic = true
+	PushConsumerErrorsToDeadletterTopic = true
 
 	msgChanel := make(chan *sarama.ConsumerMessage, 1)
 	msgChanel <- &sarama.ConsumerMessage{
@@ -253,7 +253,7 @@ func Test_ConsumeClaim_Message_Error_WithErrorTopic(t *testing.T) {
 }
 
 func Test_ConsumeClaim_Message_Error_WithPanicTopic(t *testing.T) {
-	PushConsumerErrorsToTopic = true
+	PushConsumerErrorsToDeadletterTopic = true
 
 	msgChanel := make(chan *sarama.ConsumerMessage, 1)
 	msgChanel <- &sarama.ConsumerMessage{
@@ -303,7 +303,7 @@ func Test_ConsumeClaim_Message_Error_WithPanicTopic(t *testing.T) {
 }
 
 func Test_ConsumeClaim_Message_Error_WithHandlerSpecificRetryTopic(t *testing.T) {
-	PushConsumerErrorsToTopic = false // global value that is overwritten for the handler in this test
+	PushConsumerErrorsToRetryTopic = false // global value that is overwritten for the handler in this test
 
 	// Arrange
 	msgChanel := make(chan *sarama.ConsumerMessage, 1)
@@ -372,7 +372,7 @@ func Test_handleErrorMessage_OmittedError(t *testing.T) {
 	}).Once()
 	ErrorLogger = mockLogger
 
-	l.handleErrorMessage(context.Background(), fmt.Errorf("%w: %w", omittedError, ErrEventOmitted), Handler{}, nil)
+	l.handleErrorMessage(fmt.Errorf("%w: %w", omittedError, ErrEventOmitted), Handler{}, nil)
 
 	assert.True(t, errorLogged)
 }
