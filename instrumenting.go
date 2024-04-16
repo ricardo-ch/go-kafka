@@ -157,27 +157,30 @@ func NewConsumerMetricsService(groupID string) *ConsumerMetricsService {
 
 // Instrumentation middleware used to add metrics
 func (c *ConsumerMetricsService) Instrumentation(next Handler) Handler {
-	return func(ctx context.Context, msg *sarama.ConsumerMessage) (err error) {
-		defer func(begin time.Time) {
-			c.recordConsumedLatency.WithLabelValues(msg.Topic, c.groupID).Observe(time.Since(begin).Seconds())
-		}(time.Now())
+	return Handler{
+		Processor: func(ctx context.Context, msg *sarama.ConsumerMessage) (err error) {
+			defer func(begin time.Time) {
+				c.recordConsumedLatency.WithLabelValues(msg.Topic, c.groupID).Observe(time.Since(begin).Seconds())
+			}(time.Now())
 
-		err = next(ctx, msg)
-		if err == nil {
-			c.recordConsumedCounter.WithLabelValues(msg.Topic, c.groupID).Inc()
+			err = next.Processor(ctx, msg)
+			if err == nil {
+				c.recordConsumedCounter.WithLabelValues(msg.Topic, c.groupID).Inc()
 
-			// If sarama sets the timestamp to the block timestamp, it means that the message was
-			// produced with the LogAppendTime timestamp type. Otherwise, it was produced with the
-			// CreateTime timestamp type.
-			// Since sarama anyways sets msg.BlockTimestamp to the block timestamp,
-			// we can compare it with msg.Timestamp to know if the message was produced with the
-			// LogAppendTime timestamp type or not.
-			timestampType := TimestampTypeLogAppendTime
-			if msg.Timestamp != msg.BlockTimestamp {
-				timestampType = TimestampTypeCreateTime
+				// If sarama sets the timestamp to the block timestamp, it means that the message was
+				// produced with the LogAppendTime timestamp type. Otherwise, it was produced with the
+				// CreateTime timestamp type.
+				// Since sarama anyways sets msg.BlockTimestamp to the block timestamp,
+				// we can compare it with msg.Timestamp to know if the message was produced with the
+				// LogAppendTime timestamp type or not.
+				timestampType := TimestampTypeLogAppendTime
+				if msg.Timestamp != msg.BlockTimestamp {
+					timestampType = TimestampTypeCreateTime
+				}
+				c.currentMessageTimestamp.WithLabelValues(msg.Topic, c.groupID, string(msg.Partition), timestampType).Set(float64(msg.Timestamp.Unix()))
 			}
-			c.currentMessageTimestamp.WithLabelValues(msg.Topic, c.groupID, string(msg.Partition), timestampType).Set(float64(msg.Timestamp.Unix()))
-		}
-		return
+			return
+		},
+		Config: next.Config,
 	}
 }

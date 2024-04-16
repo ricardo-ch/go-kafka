@@ -15,7 +15,19 @@ import (
 )
 
 var (
-	testHandler = func(ctx context.Context, msg *sarama.ConsumerMessage) error { return nil }
+	testHandler = Handler{
+		Processor: func(ctx context.Context, msg *sarama.ConsumerMessage) error { return nil },
+	}
+	testHandlerConfig = HandlerConfig{
+		ConsumerMaxRetries:  Ptr(10),
+		DurationBeforeRetry: Ptr(1 * time.Millisecond),
+		RetryTopic:          "retry-topic",
+		DeadletterTopic:     "deadletter-topic",
+	}
+	testHandlerWithConfig = Handler{
+		Processor: func(ctx context.Context, msg *sarama.ConsumerMessage) error { return nil },
+		Config:    testHandlerConfig,
+	}
 )
 
 func Test_NewListener_Should_Return_Error_When_No_Broker_Provided(t *testing.T) {
@@ -54,6 +66,68 @@ func Test_NewListener_Should_Return_Error_When_No_Handlers_Provided(t *testing.T
 
 	// Act
 	l, err := NewListener(groupID, handlers)
+
+	// Assert
+	assert.Error(t, err)
+	assert.Nil(t, l)
+}
+
+func Test_NewListener_Should_Return_Error_When_Initial_Topic_Equals_Retry_Topic(t *testing.T) {
+	// Arrange
+	leaderBroker := sarama.NewMockBroker(t, 1)
+
+	metadataResponse := &sarama.MetadataResponse{
+		Version: 5,
+	}
+	metadataResponse.AddBroker(leaderBroker.Addr(), leaderBroker.BrokerID())
+	metadataResponse.AddTopicPartition("retry-topic", 0, leaderBroker.BrokerID(), nil, nil, nil, sarama.ErrNoError)
+	leaderBroker.Returns(metadataResponse)
+
+	consumerMetadataResponse := sarama.ConsumerMetadataResponse{
+		CoordinatorID:   leaderBroker.BrokerID(),
+		CoordinatorHost: leaderBroker.Addr(),
+		CoordinatorPort: leaderBroker.Port(),
+		Err:             sarama.ErrNoError,
+	}
+	leaderBroker.Returns(&consumerMetadataResponse)
+
+	Brokers = []string{leaderBroker.Addr()}
+
+	handlers := map[string]Handler{"retry-topic": testHandlerWithConfig}
+
+	// Act
+	l, err := NewListener("groupID", handlers)
+
+	// Assert
+	assert.Error(t, err)
+	assert.Nil(t, l)
+}
+
+func Test_NewListener_Should_Return_Error_When_Initial_Topic_Equals_Deadletter_Topic(t *testing.T) {
+	// Arrange
+	leaderBroker := sarama.NewMockBroker(t, 1)
+
+	metadataResponse := &sarama.MetadataResponse{
+		Version: 5,
+	}
+	metadataResponse.AddBroker(leaderBroker.Addr(), leaderBroker.BrokerID())
+	metadataResponse.AddTopicPartition("deadletter-topic", 0, leaderBroker.BrokerID(), nil, nil, nil, sarama.ErrNoError)
+	leaderBroker.Returns(metadataResponse)
+
+	consumerMetadataResponse := sarama.ConsumerMetadataResponse{
+		CoordinatorID:   leaderBroker.BrokerID(),
+		CoordinatorHost: leaderBroker.Addr(),
+		CoordinatorPort: leaderBroker.Port(),
+		Err:             sarama.ErrNoError,
+	}
+	leaderBroker.Returns(&consumerMetadataResponse)
+
+	Brokers = []string{leaderBroker.Addr()}
+
+	handlers := map[string]Handler{"deadletter-topic": testHandlerWithConfig}
+
+	// Act
+	l, err := NewListener("groupID", handlers)
 
 	// Assert
 	assert.Error(t, err)
@@ -102,10 +176,14 @@ func Test_ConsumeClaim_Happy_Path(t *testing.T) {
 
 	handlerCalled := false
 	var headerVal interface{}
-	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
 		headerVal = ctx.Value(listenerContextKey("user-id"))
 		handlerCalled = true
 		return nil
+	}
+	handler := Handler{
+		Processor: handlerProcessor,
+		Config:    testHandlerConfig,
 	}
 
 	tested := listener{
@@ -125,7 +203,7 @@ func Test_ConsumeClaim_Message_Error_WithErrorTopic(t *testing.T) {
 	// Reduce the retry interval to speed up the test
 	DurationBeforeRetry = 1 * time.Millisecond
 
-	PushConsumerErrorsToTopic = true
+	PushConsumerErrorsToDeadletterTopic = true
 
 	msgChanel := make(chan *sarama.ConsumerMessage, 1)
 	msgChanel <- &sarama.ConsumerMessage{
@@ -143,9 +221,13 @@ func Test_ConsumeClaim_Message_Error_WithErrorTopic(t *testing.T) {
 	producer.On("Produce", mock.Anything).Return(nil)
 
 	handlerCalled := false
-	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
 		handlerCalled = true
 		return fmt.Errorf("I want an error to be logged")
+	}
+	handler := Handler{
+		Processor: handlerProcessor,
+		Config:    testHandlerConfig,
 	}
 
 	errorLogged := false
@@ -171,7 +253,7 @@ func Test_ConsumeClaim_Message_Error_WithErrorTopic(t *testing.T) {
 }
 
 func Test_ConsumeClaim_Message_Error_WithPanicTopic(t *testing.T) {
-	PushConsumerErrorsToTopic = true
+	PushConsumerErrorsToDeadletterTopic = true
 
 	msgChanel := make(chan *sarama.ConsumerMessage, 1)
 	msgChanel <- &sarama.ConsumerMessage{
@@ -189,9 +271,13 @@ func Test_ConsumeClaim_Message_Error_WithPanicTopic(t *testing.T) {
 	producer.On("Produce", mock.Anything).Return(nil)
 
 	handlerCalled := false
-	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
 		handlerCalled = true
 		panic("I want an error to be logged")
+	}
+	handler := Handler{
+		Processor: handlerProcessor,
+		Config:    testHandlerConfig,
 	}
 
 	errorLogged := false
@@ -216,6 +302,63 @@ func Test_ConsumeClaim_Message_Error_WithPanicTopic(t *testing.T) {
 	producer.AssertExpectations(t)
 }
 
+func Test_ConsumeClaim_Message_Error_WithHandlerSpecificRetryTopic(t *testing.T) {
+	PushConsumerErrorsToRetryTopic = false // global value that is overwritten for the handler in this test
+
+	// Arrange
+	msgChanel := make(chan *sarama.ConsumerMessage, 1)
+	msgChanel <- &sarama.ConsumerMessage{
+		Topic: "topic-test",
+	}
+	close(msgChanel)
+
+	consumerGroupClaim := &mocks.ConsumerGroupClaim{}
+	consumerGroupClaim.On("Messages").Return((<-chan *sarama.ConsumerMessage)(msgChanel))
+
+	consumerGroupSession := &mocks.ConsumerGroupSession{}
+	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
+
+	producer := &mocks.MockProducer{}
+	producer.On("Produce", mock.Anything).Return(nil)
+
+	handlerCalled := false
+	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+		handlerCalled = true
+		panic("I want an error to be logged")
+	}
+	handler := Handler{
+		Processor: handlerProcessor,
+		Config: HandlerConfig{
+			ConsumerMaxRetries:  Ptr(3),
+			DurationBeforeRetry: Ptr(1 * time.Millisecond),
+			RetryTopic:          "retry-topic", // Here is the important part
+		},
+	}
+
+	errorLogged := false
+	mockLogger := &mocks.StdLogger{}
+	mockLogger.On("Printf", mock.Anything, mock.Anything).Return().Run(func(mock.Arguments) {
+		errorLogged = true
+	})
+	ErrorLogger = mockLogger
+
+	tested := listener{
+		handlers:           map[string]Handler{"topic-test": handler},
+		deadletterProducer: producer,
+	}
+
+	// Act
+	err := tested.ConsumeClaim(consumerGroupSession, consumerGroupClaim)
+
+	// Assert
+	assert.NoError(t, err)
+	assert.True(t, handlerCalled)
+	assert.True(t, errorLogged)
+	consumerGroupClaim.AssertExpectations(t)
+	consumerGroupSession.AssertExpectations(t)
+	producer.AssertExpectations(t)
+}
+
 func Test_handleErrorMessage_OmittedError(t *testing.T) {
 
 	omittedError := errors.New("This error should be omitted")
@@ -229,7 +372,7 @@ func Test_handleErrorMessage_OmittedError(t *testing.T) {
 	}).Once()
 	ErrorLogger = mockLogger
 
-	l.handleErrorMessage(context.Background(), fmt.Errorf("%w: %w", omittedError, ErrEventOmitted), nil)
+	l.handleErrorMessage(fmt.Errorf("%w: %w", omittedError, ErrEventOmitted), Handler{}, nil)
 
 	assert.True(t, errorLogged)
 }
@@ -240,9 +383,13 @@ func Test_handleMessageWithRetry(t *testing.T) {
 
 	err := errors.New("This error should be retried")
 	handlerCalled := 0
-	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
 		handlerCalled++
 		return err
+	}
+	handler := Handler{
+		Processor: handlerProcessor,
+		Config:    testHandlerConfig,
 	}
 
 	l := listener{}
@@ -254,9 +401,13 @@ func Test_handleMessageWithRetry(t *testing.T) {
 func Test_handleMessageWithRetry_UnretriableError(t *testing.T) {
 	err := errors.New("This error should not be retried")
 	handlerCalled := 0
-	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
 		handlerCalled++
 		return fmt.Errorf("%w: %w", err, ErrEventUnretriable)
+	}
+	handler := Handler{
+		Processor: handlerProcessor,
+		Config:    testHandlerConfig,
 	}
 
 	l := listener{}
@@ -271,7 +422,7 @@ func Test_handleMessageWithRetry_InfiniteRetries(t *testing.T) {
 
 	err := errors.New("This error should be retried")
 	handlerCalled := 0
-	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
 		handlerCalled++
 
 		// We simulate an infinite retry by failing 5 times, and then succeeding,
@@ -280,6 +431,11 @@ func Test_handleMessageWithRetry_InfiniteRetries(t *testing.T) {
 			return err
 		}
 		return nil
+	}
+
+	handler := Handler{
+		Processor: handlerProcessor,
+		Config:    testHandlerConfig,
 	}
 
 	l := listener{}
@@ -305,9 +461,13 @@ func Test_ConsumerClaim_HappyPath_WithTracing(t *testing.T) {
 	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
 
 	handlerCalled := false
-	handler := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
 		handlerCalled = true
 		return nil
+	}
+	handler := Handler{
+		Processor: handlerProcessor,
+		Config:    testHandlerConfig,
 	}
 
 	tested := listener{

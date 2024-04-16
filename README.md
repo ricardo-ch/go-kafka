@@ -7,6 +7,13 @@
 Go-kafka provides an easy way to use kafka listeners and producers with only a few lines of code.
 The listener is able to consume from multiple topics, and will execute a separate handler for each topic.
 
+> 📘 Important note for v3 upgrade:
+> - The library now relies on the IBM/sarama library instead of Shopify/sarama, which is no longer maintained.
+> - The `kafka.Handler` type has been changed to a struct containing both the function to execute and the handler's optional configuration.
+> - The global variable `PushConsumerErrorsToTopic` has been replaced by the `PushConsumerErrorsToRetryTopic` and `PushConsumerErrorsToDeadletterTopic` properties on the handler.
+>
+> These two changes should be the only breaking changes in the v3 release. The rest of the library should be compatible with the previous version. 
+
 ## Quick start
 
 Simple consumer
@@ -53,33 +60,66 @@ _ = producer.Produce(message)
 
 ## Consumer error handling
 
-You can customize the error handling of the consumer.
-And if there's still an error after all possible retries (3 by default), the error is logged and the faulty event can be pushed to a deadletter topic.
+You can customize the error handling of the consumer, using various patterns:
+* Blocking retries of the same event (Max number, and delay are configurable by handler)
+* Forward to retry topic for automatic retry without blocking the consumer
+* Forward to deadletter topic for manual investigation
 
-### Deadletter
+Here is the overall logic applied to handle errors:
+```mermaid
+stateDiagram-v2
 
-By default, events that have exceeded the maximum number of retries will be pushed to a dead letter topic.
-This behaviour can be disabled through the `PushConsumerErrorsToTopic` property.
-```go
-PushConsumerErrorsToTopic = false
+init: Error processing an event
+state is_omitable_err <<choice>>
+skipWithoutCounting: Skip the event without impacting counters
+state is_retriable_err <<choice>>
+state is_deadletter_configured <<choice>>
+skip: Skip the event
+forwardDL: Forward to deadletter topic
+state should_retry <<choice>>
+blocking_retry : Blocking Retry of this event
+state is_retry_topic_configured <<choice>>
+state is_deadletter_configured2 <<choice>>
+forwardRQ: Forward to Retry topic
+skip2: Skip the event
+defaultDL: Forward to Deadletter topic
+
+init --> is_omitable_err
+is_omitable_err --> skipWithoutCounting: Error is of type ErrEventOmitted
+is_omitable_err --> is_retriable_err: Error is not an ErrEventOmitted
+is_retriable_err --> is_deadletter_configured: Error is of type ErrEventUnretriable
+is_retriable_err --> should_retry: Error is retriable
+should_retry --> blocking_retry: There are some retries left
+should_retry --> is_retry_topic_configured : No more blocking retry
+is_deadletter_configured --> skip: No Deadletter topic configured
+is_deadletter_configured --> forwardDL: Deadletter topic configured
+is_retry_topic_configured --> forwardRQ: Retry Topic Configured
+is_retry_topic_configured --> is_deadletter_configured2: No Retry Topic Configured
+is_deadletter_configured2 --> skip2: No Deadletter topic configured
+is_deadletter_configured2 --> defaultDL: Deadletter topic configured 
+
 ```
-The name of the deadletter topic is dynamically generated based on the original topic name and the consumer group.
-For example, if the original topic is `my-topic` and the consumer group is `my-consumer-group`, the deadletter topic will be `my-consumer-group-my-topic-error`.
-This pattern can be overridden through the `ErrorTopicPattern` property.
-```go
-ErrorTopicPattern = "custom-deadletter-topic"
-```
+### Error types
+Two types of errors are introduced, so that application code can return them whenever relevant
+* `kafka.ErrEventUnretriable` - Errors that should not be retried 
+* `kafka.ErrEventOmitted` - Errors that should lead to the event being omitted without impacting metrics
 
-### Retries
+All the other errors will be considered as "retryable" errors. 
+
+Depending on the Retry topic/Deadletter topic/Max retries configuration, the event will be retried, forwarded to a retry topic, or forwarded to a deadletter topic.
+
+### Blocking Retries
 
 By default, failed events consumptions will be retried 3 times (each attempt is separated by 2 seconds).
-This can be configured through the following properties:
+This can be globally configured through the following properties:
 * `ConsumerMaxRetries`
 * `DurationBeforeRetry`
 
+These properties can also be configured on a per-topic basis by setting the `ConsumerMaxRetries` and `DurationBeforeRetry` properties on the handler.
+
 If you want to achieve a blocking retry pattern (ie. continuously retrying until the event is successfully consumed), you can set `ConsumerMaxRetries` to `InfiniteRetries` (-1).
 
-If you want to **not** retry specific errors, you can wrap them in a `kafka.ErrNonRetriable` error before returning them, or return a `kafka.ErrNonRetriable` directly.
+If you want to **not** retry specific errors, you can wrap them in a `kafka.ErrEventUnretriable` error before returning them, or return a `kafka.ErrNonRetriable` directly.
 ```go
 // This error will not be retried
 err := errors.New("my error")
@@ -88,6 +128,21 @@ return errors.Wrap(kafka.ErrNonRetriable, err.Error())
 // This error will also not be retried
 return kafka.ErrNonRetriable
 ```
+
+### Deadletter And Retry topics
+
+By default, events that have exceeded the maximum number of blocking retries will be pushed to a retry topic or dead letter topic.
+This behaviour can be disabled through the `PushConsumerErrorsToRetryTopic` and `PushConsumerErrorsToDeadletterTopic` properties.
+```go
+PushConsumerErrorsToRetryTopic = false
+PushConsumerErrorsToDeadletterTopic = false
+```
+If these switches are ON, the names of the deadletter and retry topics are dynamically generated based on the original topic name and the consumer group.
+For example, if the original topic is `my-topic` and the consumer group is `my-consumer-group`, the deadletter topic will be `my-consumer-group-my-topic-deadletter`.
+This pattern can be overridden through the `ErrorTopicPattern` property.
+Also, the retry and deadletter topics name can be overridden through the `RetryTopic` and `DeadLetterTopic` properties on the handler.
+
+Note that, if global `PushConsumerErrorsToRetryTopic` or `PushConsumerErrorsToDeadletterTopic` property are false, but you configure `RetryTopic` or `DeadLetterTopic` properties on a handler, then the events in error will be forwarder to the error topics only for this handler.
 
 ### Omitting specific errors
 

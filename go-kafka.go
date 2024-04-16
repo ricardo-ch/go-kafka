@@ -42,14 +42,23 @@ const InfiniteRetries = -1
 // By default 2 seconds.
 var DurationBeforeRetry = 2 * time.Second
 
-// PushConsumerErrorsToTopic is a boolean to define if messages in error have to be pushed to an error topic.
-var PushConsumerErrorsToTopic = true
+// PushConsumerErrorsToRetryTopic is a boolean to define if messages in error have to be pushed to a retry topic.
+var PushConsumerErrorsToRetryTopic = true
 
-// ErrorTopicPattern is the error topic name pattern.
-// By default "consumergroup-topicname-error"
+// PushConsumerErrorsToDeadletterTopic is a boolean to define if messages in error have to be pushed to a deadletter topic.
+var PushConsumerErrorsToDeadletterTopic = true
+
+// RetryTopicPattern is the retry topic name pattern.
+// By default "consumergroup-topicname-retry"
 // Use $$CG$$ as consumer group placeholder
 // Use $$T$$ as original topic name placeholder
-var ErrorTopicPattern = "$$CG$$-$$T$$-error"
+var RetryTopicPattern = "$$CG$$-$$T$$-retry"
+
+// DeadletterTopicPattern is the deadletter topic name pattern.
+// By default "consumergroup-topicname-deadletter"
+// Use $$CG$$ as consumer group placeholder
+// Use $$T$$ as original topic name placeholder
+var DeadletterTopicPattern = "$$CG$$-$$T$$-deadletter"
 
 // Config is the sarama (cluster) config used for the consumer and producer.
 var Config = sarama.NewConfig()
