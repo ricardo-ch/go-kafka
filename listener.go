@@ -102,8 +102,8 @@ func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (
 	// Fill handler config unset elements with global default values.
 	fillHandlerConfigWithDefault(handlers)
 
-	// Sanity check for error topic infinite loop
-	err = checkErrorTopicInfiniteLoop(handlers)
+	// Sanity check for error topics, to avoid infinite loop
+	err = checkErrorTopicToAvoidInfiniteLoop(handlers)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +124,7 @@ func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (
 	return l, nil
 }
 
-func checkErrorTopicInfiniteLoop(handlers Handlers) error {
+func checkErrorTopicToAvoidInfiniteLoop(handlers Handlers) error {
 	for topic, handler := range handlers {
 		if handler.Config.RetryTopic == topic {
 			return fmt.Errorf("Retry topic cannot be the same as the original topic: %s", topic)
@@ -240,13 +240,13 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 	err := l.handleMessageWithRetry(messageContext, handler, msg, *handler.Config.ConsumerMaxRetries)
 	if err != nil {
 		err = fmt.Errorf("processing failed after all possible attempts attempts: %w", err)
-		l.handleErrorMessage(messageContext, err, handler, msg)
+		l.handleErrorMessage(err, handler, msg)
 	}
 
 	session.MarkMessage(msg, "")
 }
 
-func (l *listener) handleErrorMessage(ctx context.Context, initialError error, handler Handler, msg *sarama.ConsumerMessage) {
+func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *sarama.ConsumerMessage) {
 	if errors.Is(initialError, ErrEventOmitted) {
 		l.handleOmittedMessage(initialError, msg)
 		return
@@ -266,18 +266,18 @@ func (l *listener) handleErrorMessage(ctx context.Context, initialError error, h
 			Logger.Printf("Sending message to retry topic: %s", handler.Config.RetryTopic)
 			err := forwardToTopic(l, msg, handler.Config.RetryTopic)
 			if err != nil {
-				ErrorLogger.Printf("Cannot send message to handler's error topic: %+v", err)
+				ErrorLogger.Printf("Cannot send message to handler's retry topic %s: %+v", handler.Config.RetryTopic, err)
 			}
 			return
 		}
 
 		// If not, check if global retry topic pattern is defined
 		if PushConsumerErrorsToTopic {
-			topicName := l.deduceTopicNameFromPattern(msg, RetryTopicPattern)
+			topicName := l.deduceTopicNameFromPattern(msg.Topic, RetryTopicPattern)
 			Logger.Printf("Sending message to retry topic: %s", topicName)
 			err := forwardToTopic(l, msg, topicName)
 			if err != nil {
-				ErrorLogger.Printf("Cannot send message to error topic: %+v", err)
+				ErrorLogger.Printf("Cannot send message to handler's retry topic defined with global pattern %s: %+v", topicName, err)
 			}
 			return
 		}
@@ -289,27 +289,27 @@ func (l *listener) handleErrorMessage(ctx context.Context, initialError error, h
 		Logger.Printf("Sending message to handler's deadletter topic: %s", handler.Config.DeadletterTopic)
 		err := forwardToTopic(l, msg, handler.Config.DeadletterTopic)
 		if err != nil {
-			ErrorLogger.Printf("Cannot send message to error topic: %+v", err)
+			ErrorLogger.Printf("Cannot send message to handler's deadletter topic %s: %+v", handler.Config.RetryTopic, err)
 		}
 		return
 	}
 
 	// If not, check if global deadletter topic pattern is defined
 	if PushConsumerErrorsToTopic {
-		topicName := l.deduceTopicNameFromPattern(msg, DeadletterTopicPattern)
+		topicName := l.deduceTopicNameFromPattern(msg.Topic, DeadletterTopicPattern)
 		Logger.Printf("Sending message to deadletter topic: %s", topicName)
 		err := forwardToTopic(l, msg, topicName)
 		if err != nil {
-			ErrorLogger.Printf("Cannot send message to error topic: %+v", err)
+			ErrorLogger.Printf("Cannot send message to handler's deadletter topic defined with global pattern %s: %+v", topicName, err)
 		}
 		return
 	}
 }
 
-func (l *listener) deduceTopicNameFromPattern(msg *sarama.ConsumerMessage, pattern string) string {
+func (l *listener) deduceTopicNameFromPattern(topic string, pattern string) string {
 	topicName := pattern
 	topicName = strings.Replace(topicName, "$$CG$$", l.groupID, 1)
-	topicName = strings.Replace(topicName, "$$T$$", msg.Topic, 1)
+	topicName = strings.Replace(topicName, "$$T$$", topic, 1)
 	return topicName
 }
 
