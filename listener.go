@@ -349,7 +349,7 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 		if retries != InfiniteRetries {
 			retries--
 		} else {
-			ErrorLogger.Printf("Error for message with infinite retry: %+v", err)
+			ErrorLogger.Printf("Error for message with infinite retry %+v: ", err)
 		}
 		return l.handleMessageWithRetry(ctx, handler, msg, retries)
 	}
