@@ -230,6 +230,9 @@ func Test_ConsumeClaim_Message_Error_WithErrorTopic(t *testing.T) {
 		Config:    testHandlerConfig,
 	}
 
+	defaultLogger := ErrorLogger
+	defer func() { ErrorLogger = defaultLogger }()
+
 	errorLogged := false
 	mockLogger := &mocks.StdLogger{}
 	mockLogger.On("Printf", mock.Anything, mock.Anything).Return().Run(func(mock.Arguments) {
@@ -279,6 +282,9 @@ func Test_ConsumeClaim_Message_Error_WithPanicTopic(t *testing.T) {
 		Processor: handlerProcessor,
 		Config:    testHandlerConfig,
 	}
+
+	defaultLogger := ErrorLogger
+	defer func() { ErrorLogger = defaultLogger }()
 
 	errorLogged := false
 	mockLogger := &mocks.StdLogger{}
@@ -335,6 +341,9 @@ func Test_ConsumeClaim_Message_Error_WithHandlerSpecificRetryTopic(t *testing.T)
 		},
 	}
 
+	defaultLogger := ErrorLogger
+	defer func() { ErrorLogger = defaultLogger }()
+
 	errorLogged := false
 	mockLogger := &mocks.StdLogger{}
 	mockLogger.On("Printf", mock.Anything, mock.Anything).Return().Run(func(mock.Arguments) {
@@ -364,6 +373,9 @@ func Test_handleErrorMessage_OmittedError(t *testing.T) {
 	omittedError := errors.New("This error should be omitted")
 
 	l := listener{}
+
+	defaultLogger := ErrorLogger
+	defer func() { ErrorLogger = defaultLogger }()
 
 	errorLogged := false
 	mockLogger := &mocks.StdLogger{}
