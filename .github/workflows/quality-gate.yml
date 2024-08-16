@@ -10,7 +10,7 @@ on:
 
 jobs:
   quality-gate:
-    uses: ricardo-ch/golang-workflows/.github/workflows/library.yml@v1
+    uses: ricardo-ch/golang-workflows/.github/workflows/library.yml@fix-default-work-dir
     secrets: inherit
 
  
