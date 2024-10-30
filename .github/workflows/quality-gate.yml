@@ -1,5 +1,5 @@
 name: Go Kafka Build and Test
-run-name: Go Kafka Build and Test by ${{ github.actor }} on ${{ github.ref_name }}
+run-name: Go Kafka Build and Test by ${{ github.actor }} on ${{ github.head_ref }}
 
 on:
   push:
@@ -10,7 +10,7 @@ on:
 
 jobs:
   quality-gate:
-    uses: ricardo-ch/golang-workflows/.github/workflows/library.yml@fix-default-work-dir
+    uses: ricardo-ch/golang-workflows/.github/workflows/library.yml@v1
     secrets: inherit
 
  
