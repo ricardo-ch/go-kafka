@@ -1,0 +1,32 @@
+name: Go Kafka Build and Test
+run-name: Go Kafka Build and Test by ${{ github.actor }} on ${{ github.head_ref }}
+
+on:
+  push:
+    branches:
+      - master
+    
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+  
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Download dependencies
+        run: go install ./...
+        shell: sh
+      - name: Run tests
+        run: go test -count=1 -race -v ./...
+        shell: sh
+
+ 
