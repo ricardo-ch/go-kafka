@@ -222,7 +222,7 @@ func (l *listener) ConsumeClaim(session sarama.ConsumerGroupSession, claim saram
 }
 
 func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.ConsumerGroupSession) {
-	messageContext := context.WithValue(context.Background(), contextTopicKey, msg.Topic)
+	messageContext := context.WithValue(session.Context(), contextTopicKey, msg.Topic)
 	messageContext = context.WithValue(messageContext, contextkeyKey, msg.Key)
 	messageContext = context.WithValue(messageContext, contextOffsetKey, msg.Offset)
 	messageContext = context.WithValue(messageContext, contextTimestampKey, msg.Timestamp)
