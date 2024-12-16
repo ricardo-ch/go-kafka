@@ -61,6 +61,7 @@ const (
 type Listener interface {
 	Listen(ctx context.Context) error
 	Close()
+	GroupID() string
 }
 
 // NewListener creates a new instance of Listener
@@ -122,6 +123,11 @@ func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (
 	}
 
 	return l, nil
+}
+
+// GroupID return the groupID of the listener
+func (l *listener) GroupID() string {
+	return l.groupID
 }
 
 func checkErrorTopicToAvoidInfiniteLoop(handlers Handlers) error {
