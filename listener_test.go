@@ -457,6 +457,37 @@ func Test_handleMessageWithRetry_InfiniteRetries(t *testing.T) {
 
 }
 
+func Test_handleMessageWithRetry_InfiniteRetriesWithContextCancel(t *testing.T) {
+	// Reduce the retry interval to speed up the test
+	DurationBeforeRetry = 1 * time.Millisecond
+	err := errors.New("This error should be retried")
+
+	handlerCalled := 0
+	ctx := context.Background()
+	ctx, cancel := context.WithCancel(ctx)
+	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+		handlerCalled++
+
+		// We simulate an infinite retry by failing 5 times, and then a context is canceled,
+		// which is above the 3 retries normally expected
+		if handlerCalled > 4 {
+			cancel()
+		}
+		return err
+	}
+
+	handler := Handler{
+		Processor: handlerProcessor,
+		Config:    testHandlerConfig,
+	}
+
+	l := listener{}
+	l.handleMessageWithRetry(ctx, handler, nil, InfiniteRetries)
+
+	assert.Equal(t, 5, handlerCalled)
+
+}
+
 // Basically a copy paste of the happy path but with tracing
 // This test only checks that the tracing is not preventing the consumption
 func Test_ConsumerClaim_HappyPath_WithTracing(t *testing.T) {

@@ -343,6 +343,11 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 		}
 	}()
 
+	// Check if context is still valid
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
 	err = handler.Processor(ctx, msg)
 	if err != nil && shouldRetry(retries, err) {
 		time.Sleep(*handler.Config.DurationBeforeRetry)
