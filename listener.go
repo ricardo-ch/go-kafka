@@ -249,7 +249,9 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 		l.handleErrorMessage(err, handler, msg)
 	}
 
-	session.MarkMessage(msg, "")
+	if !errors.Is(err, context.Canceled) {
+		session.MarkMessage(msg, "")
+	}
 }
 
 func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *sarama.ConsumerMessage) {
