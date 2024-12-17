@@ -172,6 +172,7 @@ func Test_ConsumeClaim_Happy_Path(t *testing.T) {
 	consumerGroupClaim.On("Messages").Return((<-chan *sarama.ConsumerMessage)(msgChanel))
 
 	consumerGroupSession := &mocks.ConsumerGroupSession{}
+	consumerGroupSession.On("Context").Return(context.Background())
 	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
 
 	handlerCalled := false
@@ -215,6 +216,7 @@ func Test_ConsumeClaim_Message_Error_WithErrorTopic(t *testing.T) {
 	consumerGroupClaim.On("Messages").Return((<-chan *sarama.ConsumerMessage)(msgChanel))
 
 	consumerGroupSession := &mocks.ConsumerGroupSession{}
+	consumerGroupSession.On("Context").Return(context.Background())
 	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
 
 	producer := &mocks.MockProducer{}
@@ -268,6 +270,7 @@ func Test_ConsumeClaim_Message_Error_WithPanicTopic(t *testing.T) {
 	consumerGroupClaim.On("Messages").Return((<-chan *sarama.ConsumerMessage)(msgChanel))
 
 	consumerGroupSession := &mocks.ConsumerGroupSession{}
+	consumerGroupSession.On("Context").Return(context.Background())
 	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
 
 	producer := &mocks.MockProducer{}
@@ -322,6 +325,7 @@ func Test_ConsumeClaim_Message_Error_WithHandlerSpecificRetryTopic(t *testing.T)
 	consumerGroupClaim.On("Messages").Return((<-chan *sarama.ConsumerMessage)(msgChanel))
 
 	consumerGroupSession := &mocks.ConsumerGroupSession{}
+	consumerGroupSession.On("Context").Return(context.Background())
 	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
 
 	producer := &mocks.MockProducer{}
@@ -363,6 +367,54 @@ func Test_ConsumeClaim_Message_Error_WithHandlerSpecificRetryTopic(t *testing.T)
 	assert.NoError(t, err)
 	assert.True(t, handlerCalled)
 	assert.True(t, errorLogged)
+	consumerGroupClaim.AssertExpectations(t)
+	consumerGroupSession.AssertExpectations(t)
+	producer.AssertExpectations(t)
+}
+
+func Test_ConsumeClaim_Message_Error_Context_Cancelled_Does_Not_Commit_Offset(t *testing.T) {
+	PushConsumerErrorsToRetryTopic = false
+	PushConsumerErrorsToDeadletterTopic = false
+
+	// Arrange
+	msgChanel := make(chan *sarama.ConsumerMessage, 1)
+	msgChanel <- &sarama.ConsumerMessage{
+		Topic: "topic-test",
+	}
+	close(msgChanel)
+
+	consumerGroupClaim := &mocks.ConsumerGroupClaim{}
+	consumerGroupClaim.On("Messages").Return((<-chan *sarama.ConsumerMessage)(msgChanel))
+
+	consumerGroupSession := &mocks.ConsumerGroupSession{}
+	consumerGroupSession.On("Context").Return(context.Background())
+
+	producer := &mocks.MockProducer{}
+
+	handlerCalled := false
+	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+		handlerCalled = true
+		return context.Canceled
+	}
+	handler := Handler{
+		Processor: handlerProcessor,
+		Config: HandlerConfig{
+			ConsumerMaxRetries:  Ptr(3),
+			DurationBeforeRetry: Ptr(1 * time.Millisecond),
+		},
+	}
+
+	tested := listener{
+		handlers:           map[string]Handler{"topic-test": handler},
+		deadletterProducer: producer,
+	}
+
+	// Act
+	err := tested.ConsumeClaim(consumerGroupSession, consumerGroupClaim)
+
+	// Assert
+	assert.NoError(t, err)
+	assert.True(t, handlerCalled)
 	consumerGroupClaim.AssertExpectations(t)
 	consumerGroupSession.AssertExpectations(t)
 	producer.AssertExpectations(t)
@@ -501,6 +553,7 @@ func Test_ConsumerClaim_HappyPath_WithTracing(t *testing.T) {
 	consumerGroupClaim.On("Messages").Return((<-chan *sarama.ConsumerMessage)(msgChanel))
 
 	consumerGroupSession := &mocks.ConsumerGroupSession{}
+	consumerGroupSession.On("Context").Return(context.Background())
 	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
 
 	handlerCalled := false

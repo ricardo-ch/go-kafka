@@ -222,7 +222,7 @@ func (l *listener) ConsumeClaim(session sarama.ConsumerGroupSession, claim saram
 }
 
 func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.ConsumerGroupSession) {
-	messageContext := context.WithValue(context.Background(), contextTopicKey, msg.Topic)
+	messageContext := context.WithValue(session.Context(), contextTopicKey, msg.Topic)
 	messageContext = context.WithValue(messageContext, contextkeyKey, msg.Key)
 	messageContext = context.WithValue(messageContext, contextOffsetKey, msg.Offset)
 	messageContext = context.WithValue(messageContext, contextTimestampKey, msg.Timestamp)
@@ -245,11 +245,13 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 
 	err := l.handleMessageWithRetry(messageContext, handler, msg, *handler.Config.ConsumerMaxRetries)
 	if err != nil {
-		err = fmt.Errorf("processing failed after all possible attempts attempts: %w", err)
+		err = fmt.Errorf("processing failed: %w", err)
 		l.handleErrorMessage(err, handler, msg)
 	}
 
-	session.MarkMessage(msg, "")
+	if !errors.Is(err, context.Canceled) {
+		session.MarkMessage(msg, "")
+	}
 }
 
 func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *sarama.ConsumerMessage) {
