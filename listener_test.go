@@ -172,6 +172,7 @@ func Test_ConsumeClaim_Happy_Path(t *testing.T) {
 	consumerGroupClaim.On("Messages").Return((<-chan *sarama.ConsumerMessage)(msgChanel))
 
 	consumerGroupSession := &mocks.ConsumerGroupSession{}
+	consumerGroupSession.On("Context").Return(context.Background())
 	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
 
 	handlerCalled := false
@@ -215,6 +216,7 @@ func Test_ConsumeClaim_Message_Error_WithErrorTopic(t *testing.T) {
 	consumerGroupClaim.On("Messages").Return((<-chan *sarama.ConsumerMessage)(msgChanel))
 
 	consumerGroupSession := &mocks.ConsumerGroupSession{}
+	consumerGroupSession.On("Context").Return(context.Background())
 	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
 
 	producer := &mocks.MockProducer{}
@@ -268,6 +270,7 @@ func Test_ConsumeClaim_Message_Error_WithPanicTopic(t *testing.T) {
 	consumerGroupClaim.On("Messages").Return((<-chan *sarama.ConsumerMessage)(msgChanel))
 
 	consumerGroupSession := &mocks.ConsumerGroupSession{}
+	consumerGroupSession.On("Context").Return(context.Background())
 	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
 
 	producer := &mocks.MockProducer{}
@@ -322,6 +325,7 @@ func Test_ConsumeClaim_Message_Error_WithHandlerSpecificRetryTopic(t *testing.T)
 	consumerGroupClaim.On("Messages").Return((<-chan *sarama.ConsumerMessage)(msgChanel))
 
 	consumerGroupSession := &mocks.ConsumerGroupSession{}
+	consumerGroupSession.On("Context").Return(context.Background())
 	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
 
 	producer := &mocks.MockProducer{}
@@ -501,6 +505,7 @@ func Test_ConsumerClaim_HappyPath_WithTracing(t *testing.T) {
 	consumerGroupClaim.On("Messages").Return((<-chan *sarama.ConsumerMessage)(msgChanel))
 
 	consumerGroupSession := &mocks.ConsumerGroupSession{}
+	consumerGroupSession.On("Context").Return(context.Background())
 	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
 
 	handlerCalled := false
