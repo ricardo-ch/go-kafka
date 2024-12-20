@@ -261,7 +261,7 @@ func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *
 	}
 
 	// Log
-	ErrorLogger.Println(initialError, "error", "error while processing message, we apply retry topic policy")
+	ErrorLogger.Println(initialError, "error", "unable to process message, we apply retry topic policy")
 
 	// Inc dropped messages metrics
 	if l.instrumenting != nil && l.instrumenting.recordErrorCounter != nil {
@@ -371,7 +371,7 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 		if retries != InfiniteRetries {
 			retries--
 		} else {
-			errLog := []interface{}{ctx, err, "error", "error for message with infinite retry"}
+			errLog := []interface{}{ctx, err, "error", "unable to process message we retry indefinitely"}
 			errLog = append(errLog, extractMessageInfoForLog(msg)...)
 			ErrorLogger.Println(errLog...)
 		}
