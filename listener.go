@@ -67,7 +67,7 @@ type Listener interface {
 // NewListener creates a new instance of Listener
 func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (Listener, error) {
 	if groupID == "" {
-		return nil, errors.New("cannot create new listener, groupID cannot be empty")
+		return nil, errors.New("cannot create new listener, group_id cannot be empty")
 	}
 	if len(handlers) == 0 {
 		return nil, errors.New("cannot create new listener, handlers cannot be empty")
@@ -94,9 +94,9 @@ func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (
 	}
 
 	go func() {
-		err := <-consumerGroup.Errors()
-		if err != nil {
-			ErrorLogger.Println("sarama error: %s", err.Error())
+		errConsumer := <-consumerGroup.Errors()
+		if errConsumer != nil {
+			ErrorLogger.Println(err, "error", "sarama error")
 		}
 	}()
 
@@ -133,10 +133,10 @@ func (l *listener) GroupID() string {
 func checkErrorTopicToAvoidInfiniteLoop(handlers Handlers) error {
 	for topic, handler := range handlers {
 		if handler.Config.RetryTopic == topic {
-			return fmt.Errorf("Retry topic cannot be the same as the original topic: %s", topic)
+			return fmt.Errorf("retry topic cannot be the same as the original topic: %s", topic)
 		}
 		if handler.Config.DeadletterTopic == topic {
-			return fmt.Errorf("Deadletter topic cannot be the same as the original topic: %s", topic)
+			return fmt.Errorf("deadletter topic cannot be the same as the original topic: %s", topic)
 		}
 	}
 	return nil
@@ -164,7 +164,7 @@ type ListenerOption func(l *listener)
 // Listen process incoming kafka messages with handlers configured by the listener
 func (l *listener) Listen(consumerContext context.Context) error {
 	if l.consumerGroup == nil {
-		return errors.New("cannot subscribe. ConsumerGroup is nil")
+		return errors.New("consumerGroup is nil, cannot listen")
 	}
 
 	// When a session is over, make consumer join a new session, as long as the context is not cancelled
@@ -187,7 +187,7 @@ func (l *listener) Close() {
 	if l.consumerGroup != nil {
 		err := l.consumerGroup.Close()
 		if err != nil {
-			ErrorLogger.Printf("Error while closing sarama consumerGroup: %s", err.Error())
+			ErrorLogger.Println(err, "error", "unable to close sarama consumerGroup")
 		}
 	}
 }
@@ -261,7 +261,7 @@ func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *
 	}
 
 	// Log
-	ErrorLogger.Printf("Consume: %+v", initialError)
+	ErrorLogger.Println(initialError, "error", "unable to process message, we apply retry topic policy")
 
 	// Inc dropped messages metrics
 	if l.instrumenting != nil && l.instrumenting.recordErrorCounter != nil {
@@ -271,10 +271,12 @@ func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *
 	if isRetriableError(initialError) {
 		// First, check if handler's config defines retry topic
 		if handler.Config.RetryTopic != "" {
-			Logger.Printf("Sending message to retry topic: %s", handler.Config.RetryTopic)
+			Logger.Printf("sending message to retry topic: %s", handler.Config.RetryTopic)
 			err := forwardToTopic(l, msg, handler.Config.RetryTopic)
 			if err != nil {
-				ErrorLogger.Printf("Cannot send message to handler's retry topic %s: %+v", handler.Config.RetryTopic, err)
+				errLog := []interface{}{err, "error", "cannot send message to handler's retry topic", "retry_topic", handler.Config.RetryTopic}
+				errLog = append(errLog, extractMessageInfoForLog(msg)...)
+				ErrorLogger.Println(errLog...)
 			}
 			return
 		}
@@ -282,10 +284,12 @@ func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *
 		// If not, check if global retry topic pattern is defined
 		if PushConsumerErrorsToRetryTopic {
 			topicName := l.deduceTopicNameFromPattern(msg.Topic, RetryTopicPattern)
-			Logger.Printf("Sending message to retry topic: %s", topicName)
+			Logger.Printf("sending message to retry topic: %s", topicName)
 			err := forwardToTopic(l, msg, topicName)
 			if err != nil {
-				ErrorLogger.Printf("Cannot send message to handler's retry topic defined with global pattern %s: %+v", topicName, err)
+				errLog := []interface{}{err, "error", "cannot send message to handler's retry topic defined with global pattern", "topic", topicName}
+				errLog = append(errLog, extractMessageInfoForLog(msg)...)
+				ErrorLogger.Println(errLog...)
 			}
 			return
 		}
@@ -294,10 +298,13 @@ func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *
 	// If the error is not retriable, or if there is no retry topic defined at all, then try to send to dead letter topic
 	// First, check if handler's config defines deadletter topic
 	if handler.Config.DeadletterTopic != "" {
-		Logger.Printf("Sending message to handler's deadletter topic: %s", handler.Config.DeadletterTopic)
+		Logger.Printf("sending message to handler's deadletter topic: %s", handler.Config.DeadletterTopic)
 		err := forwardToTopic(l, msg, handler.Config.DeadletterTopic)
 		if err != nil {
-			ErrorLogger.Printf("Cannot send message to handler's deadletter topic %s: %+v", handler.Config.RetryTopic, err)
+			errLog := []interface{}{err, "error", "cannot send message to handler's deadletter topic", "deadletter_topic", handler.Config.DeadletterTopic}
+			errLog = append(errLog, extractMessageInfoForLog(msg)...)
+			ErrorLogger.Println(errLog...)
+
 		}
 		return
 	}
@@ -305,10 +312,12 @@ func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *
 	// If not, check if global deadletter topic pattern is defined
 	if PushConsumerErrorsToDeadletterTopic {
 		topicName := l.deduceTopicNameFromPattern(msg.Topic, DeadletterTopicPattern)
-		Logger.Printf("Sending message to deadletter topic: %s", topicName)
+		Logger.Printf("sending message to deadletter topic: %s", topicName)
 		err := forwardToTopic(l, msg, topicName)
 		if err != nil {
-			ErrorLogger.Printf("Cannot send message to handler's deadletter topic defined with global pattern %s: %+v", topicName, err)
+			errorLog := []interface{}{err, "error", "cannot send message to handler's deadletter topic defined with global pattern", "topic", topicName}
+			errorLog = append(errorLog, extractMessageInfoForLog(msg)...)
+			ErrorLogger.Println(errorLog...)
 		}
 		return
 	}
@@ -335,7 +344,7 @@ func isRetriableError(initialError error) bool {
 }
 
 func (l *listener) handleOmittedMessage(initialError error, msg *sarama.ConsumerMessage) {
-	ErrorLogger.Printf("Omitted message: %+v", initialError)
+	ErrorLogger.Println(initialError, "error", "omitted message")
 
 	// Inc dropped messages metrics
 	if l.instrumenting != nil && l.instrumenting.recordOmittedCounter != nil {
@@ -347,7 +356,7 @@ func (l *listener) handleOmittedMessage(initialError error, msg *sarama.Consumer
 func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage, retries int) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("Panic happened during handle of message: %v", r)
+			err = fmt.Errorf("panic happened during handle of message: %v", r)
 		}
 	}()
 
@@ -362,7 +371,9 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 		if retries != InfiniteRetries {
 			retries--
 		} else {
-			ErrorLogger.Printf("Error for message with infinite retry %+v: ", err)
+			errLog := []interface{}{ctx, err, "error", "unable to process message we retry indefinitely"}
+			errLog = append(errLog, extractMessageInfoForLog(msg)...)
+			ErrorLogger.Println(errLog...)
 		}
 		return l.handleMessageWithRetry(ctx, handler, msg, retries)
 	}
@@ -380,4 +391,11 @@ func shouldRetry(retries int, err error) bool {
 	}
 
 	return true
+}
+
+func extractMessageInfoForLog(msg *sarama.ConsumerMessage) []interface{} {
+	if msg == nil {
+		return []interface{}{"message", "nil"}
+	}
+	return []interface{}{"message_topic", msg.Topic, "topic_partition", msg.Partition, "message_offset", msg.Offset, "message_key", string(msg.Key)}
 }
