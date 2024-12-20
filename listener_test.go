@@ -237,7 +237,7 @@ func Test_ConsumeClaim_Message_Error_WithErrorTopic(t *testing.T) {
 
 	errorLogged := false
 	mockLogger := &mocks.StdLogger{}
-	mockLogger.On("Printf", mock.Anything, mock.Anything).Return().Run(func(mock.Arguments) {
+	mockLogger.On("Println", mock.Anything, mock.Anything, mock.Anything).Return().Run(func(mock.Arguments) {
 		errorLogged = true
 	})
 	ErrorLogger = mockLogger
@@ -291,7 +291,7 @@ func Test_ConsumeClaim_Message_Error_WithPanicTopic(t *testing.T) {
 
 	errorLogged := false
 	mockLogger := &mocks.StdLogger{}
-	mockLogger.On("Printf", mock.Anything, mock.Anything).Return().Run(func(mock.Arguments) {
+	mockLogger.On("Println", mock.Anything, mock.Anything, mock.Anything).Return().Run(func(mock.Arguments) {
 		errorLogged = true
 	})
 	ErrorLogger = mockLogger
@@ -350,7 +350,7 @@ func Test_ConsumeClaim_Message_Error_WithHandlerSpecificRetryTopic(t *testing.T)
 
 	errorLogged := false
 	mockLogger := &mocks.StdLogger{}
-	mockLogger.On("Printf", mock.Anything, mock.Anything).Return().Run(func(mock.Arguments) {
+	mockLogger.On("Println", mock.Anything, mock.Anything, mock.Anything).Return().Run(func(mock.Arguments) {
 		errorLogged = true
 	})
 	ErrorLogger = mockLogger
@@ -431,7 +431,7 @@ func Test_handleErrorMessage_OmittedError(t *testing.T) {
 
 	errorLogged := false
 	mockLogger := &mocks.StdLogger{}
-	mockLogger.On("Printf", "Omitted message: %+v", mock.Anything).Return().Run(func(mock.Arguments) {
+	mockLogger.On("Println", mock.Anything, "error", "omitted message").Return().Run(func(mock.Arguments) {
 		errorLogged = true
 	}).Once()
 	ErrorLogger = mockLogger
