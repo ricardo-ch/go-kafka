@@ -187,7 +187,7 @@ func (l *listener) Close() {
 	if l.consumerGroup != nil {
 		err := l.consumerGroup.Close()
 		if err != nil {
-			ErrorLogger.Println(err, "error", "error while closing sarama consumerGroup")
+			ErrorLogger.Println(err, "error", "unable to close sarama consumerGroup")
 		}
 	}
 }
