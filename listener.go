@@ -245,7 +245,7 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 		handler = l.instrumenting.Instrumentation(handler)
 	}
 
-	err := l.handleMessageWithRetry(messageContext, handler, msg, *handler.Config.ConsumerMaxRetries, handler.Config.ExponentialBackoff)
+	err := l.handleMessageWithRetry(messageContext, handler, msg, *handler.Config.ConsumerMaxRetries, 0, handler.Config.ExponentialBackoff)
 	if err != nil {
 		err = fmt.Errorf("processing failed: %w", err)
 		l.handleErrorMessage(err, handler, msg)
@@ -355,7 +355,7 @@ func (l *listener) handleOmittedMessage(initialError error, msg *sarama.Consumer
 }
 
 // handleMessageWithRetry call the handler function and retry if it fails
-func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage, retries int, exponentialBackoff bool) (err error) {
+func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage, retries, retryNumber int, exponentialBackoff bool) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic happened during handle of message: %v", r)
@@ -379,11 +379,12 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 		if retries != InfiniteRetries {
 			retries--
 		} else {
-			errLog := []interface{}{ctx, err, "error", "unable to process message we retry indefinitely"}
+			errLog := []interface{}{ctx, err, "error", "unable to process message we retry indefinitely", "retry_number", retryNumber}
 			errLog = append(errLog, extractMessageInfoForLog(msg)...)
 			ErrorLogger.Println(errLog...)
+			retryNumber++
 		}
-		return l.handleMessageWithRetry(ctx, handler, msg, retries, exponentialBackoff)
+		return l.handleMessageWithRetry(ctx, handler, msg, retries, retryNumber, exponentialBackoff)
 	}
 
 	return err

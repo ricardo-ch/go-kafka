@@ -457,7 +457,7 @@ func Test_handleMessageWithRetry(t *testing.T) {
 	}
 
 	l := listener{}
-	l.handleMessageWithRetry(context.Background(), handler, nil, 3, false)
+	l.handleMessageWithRetry(context.Background(), handler, nil, 3, 0, false)
 
 	assert.Equal(t, 4, handlerCalled)
 }
@@ -478,7 +478,7 @@ func Test_handleMessageWithRetryWithBackoff(t *testing.T) {
 	}
 
 	l := listener{}
-	l.handleMessageWithRetry(context.Background(), handler, nil, 3, true)
+	l.handleMessageWithRetry(context.Background(), handler, nil, 3, 0, true)
 
 	assert.Equal(t, 4, handlerCalled)
 }
@@ -496,7 +496,7 @@ func Test_handleMessageWithRetry_UnretriableError(t *testing.T) {
 	}
 
 	l := listener{}
-	l.handleMessageWithRetry(context.Background(), handler, nil, 3, false)
+	l.handleMessageWithRetry(context.Background(), handler, nil, 3, 0, false)
 
 	assert.Equal(t, 1, handlerCalled)
 }
@@ -514,7 +514,7 @@ func Test_handleMessageWithRetry_UnretriableErrorWithBackoff(t *testing.T) {
 	}
 
 	l := listener{}
-	l.handleMessageWithRetry(context.Background(), handler, nil, 3, true)
+	l.handleMessageWithRetry(context.Background(), handler, nil, 3, 0, true)
 
 	assert.Equal(t, 1, handlerCalled)
 }
@@ -542,7 +542,7 @@ func Test_handleMessageWithRetry_InfiniteRetries(t *testing.T) {
 	}
 
 	l := listener{}
-	l.handleMessageWithRetry(context.Background(), handler, nil, InfiniteRetries, false)
+	l.handleMessageWithRetry(context.Background(), handler, nil, InfiniteRetries, 0, false)
 
 	assert.Equal(t, 5, handlerCalled)
 
@@ -570,7 +570,7 @@ func Test_handleMessageWithRetry_InfiniteRetriesWithBackoff(t *testing.T) {
 	}
 
 	l := listener{}
-	l.handleMessageWithRetry(context.Background(), handler, nil, InfiniteRetries, true)
+	l.handleMessageWithRetry(context.Background(), handler, nil, InfiniteRetries, 0, true)
 
 	assert.Equal(t, 5, handlerCalled)
 
@@ -601,7 +601,7 @@ func Test_handleMessageWithRetry_InfiniteRetriesWithContextCancel(t *testing.T) 
 	}
 
 	l := listener{}
-	l.handleMessageWithRetry(ctx, handler, nil, InfiniteRetries, false)
+	l.handleMessageWithRetry(ctx, handler, nil, InfiniteRetries, 0, false)
 
 	assert.Equal(t, 5, handlerCalled)
 
