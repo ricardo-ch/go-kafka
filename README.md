@@ -114,7 +114,6 @@ By default, failed events consumptions will be retried 3 times (each attempt is 
 This can be globally configured through the following properties:
 * `ConsumerMaxRetries` (int)
 * `DurationBeforeRetry` (duration)
-* `ExponentialBackoff` (boolean)
 
 These properties can also be configured on a per-topic basis by setting the `ConsumerMaxRetries`, `DurationBeforeRetry` and `ExponentialBackoff` properties on the handler.
 
@@ -131,10 +130,10 @@ return kafka.ErrNonRetriable
 ```
  
 #### exponential backoff 
-The exponential backoff algorithm is define like this. You can activate it but setting `ExponentialBackoff` config variable as true. This configuration is useful in case of infinite retry configuration
+You can activate it but setting `ExponentialBackoff` config variable as true. You can set this properties as global, you have to use the configuration per-topic.  This configuration is useful in case of infinite retry configuration.
+The exponential backoff algorithm is define like this.
 
 $`retryDuration  = durationBeforeRetry * 2^{retries}`$
-
 
 ### Deadletter And Retry topics
 
