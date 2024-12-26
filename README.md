@@ -1,6 +1,6 @@
 # GO-KAFKA
 
-[![Build Status](https://github.com/ricardo-ch/go-kafka/actions/workflows/quality-gate.yml/badge.svg)]
+![Build Status](https://github.com/ricardo-ch/go-kafka/actions/workflows/quality-gate.yml/badge.svg)
 [![Go Report Card](https://goreportcard.com/badge/github.com/ricardo-ch/go-kafka)](https://goreportcard.com/report/github.com/ricardo-ch/go-kafka)
 
 Go-kafka provides an easy way to use kafka listeners and producers with only a few lines of code.
