@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ var (
 type HandlerConfig struct {
 	ConsumerMaxRetries  *int
 	DurationBeforeRetry *time.Duration
+	ExponentialBackoff  bool
 	RetryTopic          string
 	DeadletterTopic     string
 }
@@ -243,7 +245,7 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 		handler = l.instrumenting.Instrumentation(handler)
 	}
 
-	err := l.handleMessageWithRetry(messageContext, handler, msg, *handler.Config.ConsumerMaxRetries)
+	err := l.handleMessageWithRetry(messageContext, handler, msg, *handler.Config.ConsumerMaxRetries, handler.Config.ExponentialBackoff)
 	if err != nil {
 		err = fmt.Errorf("processing failed: %w", err)
 		l.handleErrorMessage(err, handler, msg)
@@ -353,7 +355,7 @@ func (l *listener) handleOmittedMessage(initialError error, msg *sarama.Consumer
 }
 
 // handleMessageWithRetry call the handler function and retry if it fails
-func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage, retries int) (err error) {
+func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage, retries int, exponentialBackoff bool) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic happened during handle of message: %v", r)
@@ -367,7 +369,13 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 
 	err = handler.Processor(ctx, msg)
 	if err != nil && shouldRetry(retries, err) {
-		time.Sleep(*handler.Config.DurationBeforeRetry)
+		if exponentialBackoff {
+			backoffDuration := calculateExponentialBackoffDuration(retries, handler.Config.DurationBeforeRetry)
+			Logger.Printf("exponential backoff enable we will retry in %s", backoffDuration)
+			time.Sleep(backoffDuration)
+		} else {
+			time.Sleep(*handler.Config.DurationBeforeRetry)
+		}
 		if retries != InfiniteRetries {
 			retries--
 		} else {
@@ -375,7 +383,7 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 			errLog = append(errLog, extractMessageInfoForLog(msg)...)
 			ErrorLogger.Println(errLog...)
 		}
-		return l.handleMessageWithRetry(ctx, handler, msg, retries)
+		return l.handleMessageWithRetry(ctx, handler, msg, retries, exponentialBackoff)
 	}
 
 	return err
@@ -398,4 +406,14 @@ func extractMessageInfoForLog(msg *sarama.ConsumerMessage) []interface{} {
 		return []interface{}{"message", "nil"}
 	}
 	return []interface{}{"message_topic", msg.Topic, "topic_partition", msg.Partition, "message_offset", msg.Offset, "message_key", string(msg.Key)}
+}
+
+func calculateExponentialBackoffDuration(retries int, baseDuration *time.Duration) time.Duration {
+	var duration time.Duration
+	if baseDuration == nil {
+		duration = 0
+	} else {
+		duration = *baseDuration
+	}
+	return duration * time.Duration(math.Pow(2, float64(retries)))
 }
