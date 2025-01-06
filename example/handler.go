@@ -22,6 +22,7 @@ func makeUserHandler(s Service) kafka.Handler {
 		Config: kafka.HandlerConfig{
 			ConsumerMaxRetries:  kafka.Ptr(2),
 			DurationBeforeRetry: kafka.Ptr(5 * time.Second),
+			ExponentialBackoff:  true,
 		},
 	}
 }

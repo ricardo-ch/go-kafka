@@ -457,7 +457,28 @@ func Test_handleMessageWithRetry(t *testing.T) {
 	}
 
 	l := listener{}
-	l.handleMessageWithRetry(context.Background(), handler, nil, 3)
+	l.handleMessageWithRetry(context.Background(), handler, nil, 3, 0, false)
+
+	assert.Equal(t, 4, handlerCalled)
+}
+
+func Test_handleMessageWithRetryWithBackoff(t *testing.T) {
+	// Reduce the retry interval to speed up the test
+	DurationBeforeRetry = 1 * time.Millisecond
+
+	err := errors.New("This error should be retried")
+	handlerCalled := 0
+	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+		handlerCalled++
+		return err
+	}
+	handler := Handler{
+		Processor: handlerProcessor,
+		Config:    testHandlerConfig,
+	}
+
+	l := listener{}
+	l.handleMessageWithRetry(context.Background(), handler, nil, 3, 0, true)
 
 	assert.Equal(t, 4, handlerCalled)
 }
@@ -475,7 +496,25 @@ func Test_handleMessageWithRetry_UnretriableError(t *testing.T) {
 	}
 
 	l := listener{}
-	l.handleMessageWithRetry(context.Background(), handler, nil, 3)
+	l.handleMessageWithRetry(context.Background(), handler, nil, 3, 0, false)
+
+	assert.Equal(t, 1, handlerCalled)
+}
+
+func Test_handleMessageWithRetry_UnretriableErrorWithBackoff(t *testing.T) {
+	err := errors.New("This error should not be retried")
+	handlerCalled := 0
+	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+		handlerCalled++
+		return fmt.Errorf("%w: %w", err, ErrEventUnretriable)
+	}
+	handler := Handler{
+		Processor: handlerProcessor,
+		Config:    testHandlerConfig,
+	}
+
+	l := listener{}
+	l.handleMessageWithRetry(context.Background(), handler, nil, 3, 0, true)
 
 	assert.Equal(t, 1, handlerCalled)
 }
@@ -503,7 +542,35 @@ func Test_handleMessageWithRetry_InfiniteRetries(t *testing.T) {
 	}
 
 	l := listener{}
-	l.handleMessageWithRetry(context.Background(), handler, nil, InfiniteRetries)
+	l.handleMessageWithRetry(context.Background(), handler, nil, InfiniteRetries, 0, false)
+
+	assert.Equal(t, 5, handlerCalled)
+
+}
+func Test_handleMessageWithRetry_InfiniteRetriesWithBackoff(t *testing.T) {
+	// Reduce the retry interval to speed up the test
+	DurationBeforeRetry = 1 * time.Millisecond
+
+	err := errors.New("This error should be retried")
+	handlerCalled := 0
+	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+		handlerCalled++
+
+		// We simulate an infinite retry by failing 5 times, and then succeeding,
+		// which is above the 3 retries normally expected
+		if handlerCalled < 5 {
+			return err
+		}
+		return nil
+	}
+
+	handler := Handler{
+		Processor: handlerProcessor,
+		Config:    testHandlerConfig,
+	}
+
+	l := listener{}
+	l.handleMessageWithRetry(context.Background(), handler, nil, InfiniteRetries, 0, true)
 
 	assert.Equal(t, 5, handlerCalled)
 
@@ -534,7 +601,7 @@ func Test_handleMessageWithRetry_InfiniteRetriesWithContextCancel(t *testing.T) 
 	}
 
 	l := listener{}
-	l.handleMessageWithRetry(ctx, handler, nil, InfiniteRetries)
+	l.handleMessageWithRetry(ctx, handler, nil, InfiniteRetries, 0, false)
 
 	assert.Equal(t, 5, handlerCalled)
 
@@ -632,4 +699,57 @@ func Test_Listen_ContextCanceled(t *testing.T) {
 
 	assert.Equal(t, context.Canceled, err)
 	consumerGroup.AssertExpectations(t)
+}
+
+func Test_calculateExponentialBackoffDuration(t *testing.T) {
+	tests := []struct {
+		name          string
+		retries       int
+		baseDuration  *time.Duration
+		expectedDelay time.Duration
+	}{
+		{
+			name:          "nil base duration",
+			retries:       3,
+			baseDuration:  nil,
+			expectedDelay: 0,
+		},
+		{
+			name:          "zero retries",
+			retries:       0,
+			baseDuration:  Ptr(1 * time.Second),
+			expectedDelay: 1 * time.Second,
+		},
+		{
+			name:          "one retry",
+			retries:       1,
+			baseDuration:  Ptr(1 * time.Second),
+			expectedDelay: 2 * time.Second,
+		},
+		{
+			name:          "two retries",
+			retries:       2,
+			baseDuration:  Ptr(1 * time.Second),
+			expectedDelay: 4 * time.Second,
+		},
+		{
+			name:          "three retries",
+			retries:       3,
+			baseDuration:  Ptr(1 * time.Second),
+			expectedDelay: 8 * time.Second,
+		},
+		{
+			name:          "three retries with different base duration",
+			retries:       3,
+			baseDuration:  Ptr(500 * time.Millisecond),
+			expectedDelay: 4 * time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			delay := calculateExponentialBackoffDuration(tt.retries, tt.baseDuration)
+			assert.Equal(t, tt.expectedDelay, delay)
+		})
+	}
 }

@@ -110,12 +110,12 @@ Depending on the Retry topic/Deadletter topic/Max retries configuration, the eve
 
 ### Blocking Retries
 
-By default, failed events consumptions will be retried 3 times (each attempt is separated by 2 seconds).
+By default, failed events consumptions will be retried 3 times (each attempt is separated by 2 seconds) with no exponential backoff.
 This can be globally configured through the following properties:
-* `ConsumerMaxRetries`
-* `DurationBeforeRetry`
+* `ConsumerMaxRetries` (int)
+* `DurationBeforeRetry` (duration)
 
-These properties can also be configured on a per-topic basis by setting the `ConsumerMaxRetries` and `DurationBeforeRetry` properties on the handler.
+These properties can also be configured on a per-topic basis by setting the `ConsumerMaxRetries`, `DurationBeforeRetry` and `ExponentialBackoff` properties on the handler.
 
 If you want to achieve a blocking retry pattern (ie. continuously retrying until the event is successfully consumed), you can set `ConsumerMaxRetries` to `InfiniteRetries` (-1).
 
@@ -128,6 +128,12 @@ return errors.Wrap(kafka.ErrNonRetriable, err.Error())
 // This error will also not be retried
 return kafka.ErrNonRetriable
 ```
+ 
+#### exponential backoff 
+You can activate it by setting `ExponentialBackoff` config variable as true. You can set this properties as global, you have to use the configuration per-topic.  This configuration is useful in case of infinite retry configuration.
+The exponential backoff algorithm is defined like this.
+
+$`retryDuration  = durationBeforeRetry * 2^{retries}`$
 
 ### Deadletter And Retry topics
 
