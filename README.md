@@ -130,8 +130,8 @@ return kafka.ErrNonRetriable
 ```
  
 #### exponential backoff 
-You can activate it but setting `ExponentialBackoff` config variable as true. You can set this properties as global, you have to use the configuration per-topic.  This configuration is useful in case of infinite retry configuration.
-The exponential backoff algorithm is define like this.
+You can activate it by setting `ExponentialBackoff` config variable as true. You can set this properties as global, you have to use the configuration per-topic.  This configuration is useful in case of infinite retry configuration.
+The exponential backoff algorithm is defined like this.
 
 $`retryDuration  = durationBeforeRetry * 2^{retries}`$
 

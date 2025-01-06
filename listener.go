@@ -371,7 +371,7 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 	if err != nil && shouldRetry(retries, err) {
 		if exponentialBackoff {
 			backoffDuration := calculateExponentialBackoffDuration(retryNumber, handler.Config.DurationBeforeRetry)
-			Logger.Printf("exponential backoff enable we will retry in %s", backoffDuration)
+			Logger.Printf("exponential backoff enabled: we will retry in %s", backoffDuration)
 			time.Sleep(backoffDuration)
 		} else {
 			time.Sleep(*handler.Config.DurationBeforeRetry)
