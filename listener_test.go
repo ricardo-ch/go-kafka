@@ -422,7 +422,7 @@ func Test_ConsumeClaim_Message_Error_Context_Cancelled_Does_Not_Commit_Offset(t 
 
 func Test_handleErrorMessage_OmittedError(t *testing.T) {
 
-	omittedError := errors.New("This error should be omitted")
+	omittedError := errors.New("this error should be omitted")
 
 	l := listener{}
 
@@ -436,7 +436,7 @@ func Test_handleErrorMessage_OmittedError(t *testing.T) {
 	}).Once()
 	ErrorLogger = mockLogger
 
-	l.handleErrorMessage(fmt.Errorf("%w: %w", omittedError, ErrEventOmitted), Handler{}, nil)
+	l.handleErrorMessage(NewEventProcessingError(fmt.Errorf("failed in context blablah. %w", omittedError), false, true), Handler{}, nil)
 
 	assert.True(t, errorLogged)
 }
@@ -449,7 +449,7 @@ func Test_handleMessageWithRetry(t *testing.T) {
 	handlerCalled := 0
 	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
 		handlerCalled++
-		return err
+		return NewEventProcessingError(fmt.Errorf("failed in context blablah. %w", err), false, false)
 	}
 	handler := Handler{
 		Processor: handlerProcessor,
@@ -488,7 +488,7 @@ func Test_handleMessageWithRetry_UnretriableError(t *testing.T) {
 	handlerCalled := 0
 	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
 		handlerCalled++
-		return fmt.Errorf("%w: %w", err, ErrEventUnretriable)
+		return NewEventProcessingError(fmt.Errorf("failed in context blablah. %w", err), true, false)
 	}
 	handler := Handler{
 		Processor: handlerProcessor,
