@@ -331,6 +331,10 @@ func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *
 		}
 		return
 	}
+	// If we do nothing the message is implicitly omitted
+	if l.instrumenting != nil && l.instrumenting.recordOmittedCounter != nil {
+		l.instrumenting.recordOmittedCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
+	}
 }
 
 func (l *listener) deduceTopicNameFromPattern(topic string, pattern string) string {
