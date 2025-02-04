@@ -163,21 +163,21 @@ func (c *ConsumerMetricsService) Instrumentation(next Handler) Handler {
 				c.recordConsumedLatency.WithLabelValues(msg.Topic, c.groupID).Observe(time.Since(begin).Seconds())
 			}(time.Now())
 
+			// If sarama sets the timestamp to the block timestamp, it means that the message was
+			// produced with the LogAppendTime timestamp type. Otherwise, it was produced with the
+			// CreateTime timestamp type.
+			// Since sarama anyways sets msg.BlockTimestamp to the block timestamp,
+			// we can compare it with msg.Timestamp to know if the message was produced with the
+			// LogAppendTime timestamp type or not.
+			timestampType := TimestampTypeLogAppendTime
+			if msg.Timestamp != msg.BlockTimestamp {
+				timestampType = TimestampTypeCreateTime
+			}
+			c.currentMessageTimestamp.WithLabelValues(msg.Topic, c.groupID, string(msg.Partition), timestampType).Set(float64(msg.Timestamp.Unix()))
+
 			err = next.Processor(ctx, msg)
 			if err == nil {
 				c.recordConsumedCounter.WithLabelValues(msg.Topic, c.groupID).Inc()
-
-				// If sarama sets the timestamp to the block timestamp, it means that the message was
-				// produced with the LogAppendTime timestamp type. Otherwise, it was produced with the
-				// CreateTime timestamp type.
-				// Since sarama anyways sets msg.BlockTimestamp to the block timestamp,
-				// we can compare it with msg.Timestamp to know if the message was produced with the
-				// LogAppendTime timestamp type or not.
-				timestampType := TimestampTypeLogAppendTime
-				if msg.Timestamp != msg.BlockTimestamp {
-					timestampType = TimestampTypeCreateTime
-				}
-				c.currentMessageTimestamp.WithLabelValues(msg.Topic, c.groupID, string(msg.Partition), timestampType).Set(float64(msg.Timestamp.Unix()))
 			}
 			return
 		},
