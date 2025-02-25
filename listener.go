@@ -274,10 +274,6 @@ func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *
 				errLog := []interface{}{err, "error", "cannot send message to handler's retry topic", "retry_topic", handler.Config.RetryTopic}
 				errLog = append(errLog, extractMessageInfoForLog(msg)...)
 				ErrorLogger.Println(errLog...)
-				// Inc dropped messages metrics
-				if l.instrumenting != nil && l.instrumenting.recordOmittedCounter != nil {
-					l.instrumenting.recordOmittedCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
-				}
 			}
 			return
 		}
@@ -291,9 +287,6 @@ func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *
 				errLog := []interface{}{err, "error", "cannot send message to handler's retry topic defined with global pattern", "topic", topicName}
 				errLog = append(errLog, extractMessageInfoForLog(msg)...)
 				ErrorLogger.Println(errLog...)
-				if l.instrumenting != nil && l.instrumenting.recordOmittedCounter != nil {
-					l.instrumenting.recordOmittedCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
-				}
 			}
 			return
 		}
@@ -308,10 +301,6 @@ func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *
 			errLog := []interface{}{err, "error", "cannot send message to handler's deadletter topic", "deadletter_topic", handler.Config.DeadletterTopic}
 			errLog = append(errLog, extractMessageInfoForLog(msg)...)
 			ErrorLogger.Println(errLog...)
-			if l.instrumenting != nil && l.instrumenting.recordOmittedCounter != nil {
-				l.instrumenting.recordOmittedCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
-			}
-
 		}
 		return
 	}
@@ -325,9 +314,6 @@ func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *
 			errorLog := []interface{}{err, "error", "cannot send message to handler's deadletter topic defined with global pattern", "topic", topicName}
 			errorLog = append(errorLog, extractMessageInfoForLog(msg)...)
 			ErrorLogger.Println(errorLog...)
-			if l.instrumenting != nil && l.instrumenting.recordOmittedCounter != nil {
-				l.instrumenting.recordOmittedCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
-			}
 		}
 		return
 	}
