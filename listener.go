@@ -265,11 +265,6 @@ func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *
 	// Log
 	ErrorLogger.Println(initialError, "error", "unable to process message, we apply retry topic policy")
 
-	// Inc dropped messages metrics
-	if l.instrumenting != nil && l.instrumenting.recordErrorCounter != nil {
-		l.instrumenting.recordErrorCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
-	}
-
 	if isRetriableError(initialError) {
 		// First, check if handler's config defines retry topic
 		if handler.Config.RetryTopic != "" {
@@ -306,7 +301,6 @@ func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *
 			errLog := []interface{}{err, "error", "cannot send message to handler's deadletter topic", "deadletter_topic", handler.Config.DeadletterTopic}
 			errLog = append(errLog, extractMessageInfoForLog(msg)...)
 			ErrorLogger.Println(errLog...)
-
 		}
 		return
 	}
@@ -322,6 +316,10 @@ func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *
 			ErrorLogger.Println(errorLog...)
 		}
 		return
+	}
+	// If we do nothing the message is implicitly omitted
+	if l.instrumenting != nil && l.instrumenting.recordOmittedCounter != nil {
+		l.instrumenting.recordOmittedCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
 	}
 }
 
@@ -368,25 +366,30 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 	}
 
 	err = handler.Processor(ctx, msg)
-	if err != nil && shouldRetry(retries, err) {
-		if exponentialBackoff {
-			backoffDuration := calculateExponentialBackoffDuration(retryNumber, handler.Config.DurationBeforeRetry)
-			Logger.Printf("exponential backoff enabled: we will retry in %s", backoffDuration)
-			time.Sleep(backoffDuration)
-		} else {
-			time.Sleep(*handler.Config.DurationBeforeRetry)
+	if err != nil {
+		// Inc dropped messages metrics
+		if l.instrumenting != nil && l.instrumenting.recordErrorCounter != nil {
+			l.instrumenting.recordErrorCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
 		}
-		if retries != InfiniteRetries {
-			retries--
-		} else {
-			errLog := []interface{}{ctx, err, "error", "unable to process message we retry indefinitely", "retry_number", retryNumber}
-			errLog = append(errLog, extractMessageInfoForLog(msg)...)
-			ErrorLogger.Println(errLog...)
-			retryNumber++
+		if shouldRetry(retries, err) {
+			if exponentialBackoff {
+				backoffDuration := calculateExponentialBackoffDuration(retryNumber, handler.Config.DurationBeforeRetry)
+				Logger.Printf("exponential backoff enabled: we will retry in %s", backoffDuration)
+				time.Sleep(backoffDuration)
+			} else {
+				time.Sleep(*handler.Config.DurationBeforeRetry)
+			}
+			if retries != InfiniteRetries {
+				retries--
+			} else {
+				errLog := []interface{}{ctx, err, "error", "unable to process message we retry indefinitely", "retry_number", retryNumber}
+				errLog = append(errLog, extractMessageInfoForLog(msg)...)
+				ErrorLogger.Println(errLog...)
+				retryNumber++
+			}
+			return l.handleMessageWithRetry(ctx, handler, msg, retries, retryNumber, exponentialBackoff)
 		}
-		return l.handleMessageWithRetry(ctx, handler, msg, retries, retryNumber, exponentialBackoff)
 	}
-
 	return err
 }
 
