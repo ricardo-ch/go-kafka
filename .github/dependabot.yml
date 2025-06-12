@@ -1,0 +1,23 @@
+version: 2
+updates:
+  - package-ecosystem: "gomod"
+    directories:
+      - "*"
+    schedule:
+      interval: "monthly"
+    groups:
+      critical-dependencies:
+        patterns:
+          - "github.com/IBM/sarama"
+          - "github.com/opentracing/opentracing-go" 
+          - "github.com/prometheus/client_golang"
+          - "github.com/stretchr/testify"
+        update-types:
+          - "minor"
+          - "patch"
+      other-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
