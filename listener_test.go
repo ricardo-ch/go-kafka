@@ -76,20 +76,17 @@ func Test_NewListener_Should_Return_Error_When_Initial_Topic_Equals_Retry_Topic(
 	// Arrange
 	leaderBroker := sarama.NewMockBroker(t, 1)
 
-	metadataResponse := &sarama.MetadataResponse{
-		Version: 5,
-	}
-	metadataResponse.AddBroker(leaderBroker.Addr(), leaderBroker.BrokerID())
-	metadataResponse.AddTopicPartition("retry-topic", 0, leaderBroker.BrokerID(), nil, nil, nil, sarama.ErrNoError)
-	leaderBroker.Returns(metadataResponse)
-
-	consumerMetadataResponse := sarama.ConsumerMetadataResponse{
-		CoordinatorID:   leaderBroker.BrokerID(),
-		CoordinatorHost: leaderBroker.Addr(),
-		CoordinatorPort: leaderBroker.Port(),
-		Err:             sarama.ErrNoError,
-	}
-	leaderBroker.Returns(&consumerMetadataResponse)
+	// Sarama v1.46 handshake & requests
+	md := sarama.NewMockMetadataResponse(t).
+		SetBroker(leaderBroker.Addr(), leaderBroker.BrokerID()).
+		SetLeader("retry-topic", 0, leaderBroker.BrokerID())
+	fc := sarama.NewMockFindCoordinatorResponse(t).
+		SetCoordinator(sarama.CoordinatorGroup, "groupID", leaderBroker)
+	leaderBroker.SetHandlerByMap(map[string]sarama.MockResponse{
+		"ApiVersionsRequest":     sarama.NewMockApiVersionsResponse(t),
+		"MetadataRequest":        md,
+		"FindCoordinatorRequest": fc,
+	})
 
 	Brokers = []string{leaderBroker.Addr()}
 
@@ -107,20 +104,17 @@ func Test_NewListener_Should_Return_Error_When_Initial_Topic_Equals_Deadletter_T
 	// Arrange
 	leaderBroker := sarama.NewMockBroker(t, 1)
 
-	metadataResponse := &sarama.MetadataResponse{
-		Version: 5,
-	}
-	metadataResponse.AddBroker(leaderBroker.Addr(), leaderBroker.BrokerID())
-	metadataResponse.AddTopicPartition("deadletter-topic", 0, leaderBroker.BrokerID(), nil, nil, nil, sarama.ErrNoError)
-	leaderBroker.Returns(metadataResponse)
-
-	consumerMetadataResponse := sarama.ConsumerMetadataResponse{
-		CoordinatorID:   leaderBroker.BrokerID(),
-		CoordinatorHost: leaderBroker.Addr(),
-		CoordinatorPort: leaderBroker.Port(),
-		Err:             sarama.ErrNoError,
-	}
-	leaderBroker.Returns(&consumerMetadataResponse)
+	// Sarama v1.46 handshake & requests
+	md := sarama.NewMockMetadataResponse(t).
+		SetBroker(leaderBroker.Addr(), leaderBroker.BrokerID()).
+		SetLeader("deadletter-topic", 0, leaderBroker.BrokerID())
+	fc := sarama.NewMockFindCoordinatorResponse(t).
+		SetCoordinator(sarama.CoordinatorGroup, "groupID", leaderBroker)
+	leaderBroker.SetHandlerByMap(map[string]sarama.MockResponse{
+		"ApiVersionsRequest":     sarama.NewMockApiVersionsResponse(t),
+		"MetadataRequest":        md,
+		"FindCoordinatorRequest": fc,
+	})
 
 	Brokers = []string{leaderBroker.Addr()}
 
@@ -137,20 +131,17 @@ func Test_NewListener_Should_Return_Error_When_Initial_Topic_Equals_Deadletter_T
 func Test_NewListener_Happy_Path(t *testing.T) {
 	leaderBroker := sarama.NewMockBroker(t, 1)
 
-	metadataResponse := &sarama.MetadataResponse{
-		Version: 5,
-	}
-	metadataResponse.AddBroker(leaderBroker.Addr(), leaderBroker.BrokerID())
-	metadataResponse.AddTopicPartition("topic-test", 0, leaderBroker.BrokerID(), nil, nil, nil, sarama.ErrNoError)
-	leaderBroker.Returns(metadataResponse)
-
-	consumerMetadataResponse := sarama.ConsumerMetadataResponse{
-		CoordinatorID:   leaderBroker.BrokerID(),
-		CoordinatorHost: leaderBroker.Addr(),
-		CoordinatorPort: leaderBroker.Port(),
-		Err:             sarama.ErrNoError,
-	}
-	leaderBroker.Returns(&consumerMetadataResponse)
+	// Sarama v1.46 handshake & requests
+	md := sarama.NewMockMetadataResponse(t).
+		SetBroker(leaderBroker.Addr(), leaderBroker.BrokerID()).
+		SetLeader("topic-test", 0, leaderBroker.BrokerID())
+	fc := sarama.NewMockFindCoordinatorResponse(t).
+		SetCoordinator(sarama.CoordinatorGroup, "groupID", leaderBroker)
+	leaderBroker.SetHandlerByMap(map[string]sarama.MockResponse{
+		"ApiVersionsRequest":     sarama.NewMockApiVersionsResponse(t),
+		"MetadataRequest":        md,
+		"FindCoordinatorRequest": fc,
+	})
 
 	Brokers = []string{leaderBroker.Addr()}
 
