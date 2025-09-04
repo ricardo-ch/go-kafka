@@ -6,6 +6,7 @@ import (
 
 type Producer interface {
 	Produce(msg *sarama.ProducerMessage) error
+	Close() error
 }
 
 // ProducerHandler is a function that handles the production of a message. It is exposed to allow for easy middleware building.
@@ -44,6 +45,11 @@ func NewProducer(options ...ProducerOption) (Producer, error) {
 // Produce sends a message to the kafka cluster.
 func (p *producer) Produce(msg *sarama.ProducerMessage) error {
 	return p.handler(p, msg)
+}
+
+// Close closes the producer.
+func (p *producer) Close() error {
+	return p.producer.Close()
 }
 
 func produce(p *producer, msg *sarama.ProducerMessage) error {
