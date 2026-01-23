@@ -103,6 +103,9 @@ func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (
 	// Fill handler config unset elements with global default values.
 	fillHandlerConfigWithDefault(handlers)
 
+	// Log configuration for each topic
+	logHandlersConfig(groupID, handlers)
+
 	// Sanity check for error topics, to avoid infinite loop
 	err = checkErrorTopicToAvoidInfiniteLoop(handlers)
 	if err != nil {
@@ -151,6 +154,48 @@ func fillHandlerConfigWithDefault(handlers Handlers) {
 			h.Config.DurationBeforeRetry = &DurationBeforeRetry
 		}
 		handlers[k] = h
+	}
+}
+
+// logHandlersConfig logs the retry configuration for each topic handler.
+func logHandlersConfig(groupID string, handlers Handlers) {
+	for topic, handler := range handlers {
+		retryMode := "finite"
+		maxRetries := *handler.Config.ConsumerMaxRetries
+		if maxRetries == InfiniteRetries {
+			retryMode = "infinite"
+		}
+
+		retryTopic := handler.Config.RetryTopic
+		if retryTopic == "" {
+			if PushConsumerErrorsToRetryTopic {
+				retryTopic = strings.Replace(RetryTopicPattern, "$$CG$$", groupID, 1)
+				retryTopic = strings.Replace(retryTopic, "$$T$$", topic, 1)
+			} else {
+				retryTopic = "disabled"
+			}
+		}
+
+		deadletterTopic := handler.Config.DeadletterTopic
+		if deadletterTopic == "" {
+			if PushConsumerErrorsToDeadletterTopic {
+				deadletterTopic = strings.Replace(DeadletterTopicPattern, "$$CG$$", groupID, 1)
+				deadletterTopic = strings.Replace(deadletterTopic, "$$T$$", topic, 1)
+			} else {
+				deadletterTopic = "disabled"
+			}
+		}
+
+		LogInfo("topic handler configuration",
+			"consumer_group", groupID,
+			"topic", topic,
+			"retry_mode", retryMode,
+			"max_retries", maxRetries,
+			"duration_before_retry", *handler.Config.DurationBeforeRetry,
+			"exponential_backoff", handler.Config.ExponentialBackoff,
+			"retry_topic", retryTopic,
+			"deadletter_topic", deadletterTopic,
+		)
 	}
 }
 
