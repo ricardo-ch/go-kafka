@@ -186,13 +186,18 @@ func logHandlersConfig(groupID string, handlers Handlers) {
 			}
 		}
 
+		// Build backoff description
+		backoffDesc := handler.Config.DurationBeforeRetry.String()
+		if handler.Config.ExponentialBackoff {
+			backoffDesc = fmt.Sprintf("%s -> %s (exponential)", handler.Config.DurationBeforeRetry, MaxBackoffDuration)
+		}
+
 		LogInfo("topic handler configuration",
 			"consumer_group", groupID,
 			"topic", topic,
 			"retry_mode", retryMode,
 			"max_retries", maxRetries,
-			"duration_before_retry", *handler.Config.DurationBeforeRetry,
-			"exponential_backoff", handler.Config.ExponentialBackoff,
+			"backoff", backoffDesc,
 			"retry_topic", retryTopic,
 			"deadletter_topic", deadletterTopic,
 		)

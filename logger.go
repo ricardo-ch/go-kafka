@@ -9,21 +9,27 @@ import (
 	"github.com/IBM/sarama"
 )
 
+// componentAttr is the attribute added to all go-kafka logs to identify their source.
+const componentName = "go-kafka"
+
 // DefaultLogger is the default slog.Logger instance used by go-kafka.
 // By default, it logs at Info level to stderr with text format.
+// All logs include a "component" attribute set to "go-kafka".
 // You can replace it with your own logger using SetLogger().
 var DefaultLogger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 	Level: slog.LevelInfo,
-}))
+})).With("component", componentName)
 
 // SetLogger sets a custom slog.Logger for go-kafka.
 // This allows you to use your own logging configuration, handlers, and format.
+// Note: The "component" attribute is NOT automatically added to custom loggers.
+// If you want it, add it yourself: logger.With("component", "go-kafka")
 //
 // Example with JSON handler:
 //
 //	kafka.SetLogger(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 //	    Level: slog.LevelDebug,
-//	})))
+//	})).With("component", "go-kafka"))
 //
 // Example with custom handler:
 //
@@ -33,12 +39,13 @@ func SetLogger(logger *slog.Logger) {
 }
 
 // SetLogLevel sets the minimum log level for the default logger.
-// This creates a new TextHandler with the specified level.
+// This creates a new TextHandler with the specified level and preserves
+// the "component" attribute.
 // For more control, use SetLogger() with a custom handler.
 func SetLogLevel(level slog.Level) {
 	DefaultLogger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: level,
-	}))
+	})).With("component", componentName)
 }
 
 // MessageContext contains contextual information about a Kafka message for logging.

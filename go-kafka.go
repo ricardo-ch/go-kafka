@@ -1,9 +1,6 @@
 package kafka
 
 import (
-	"io"
-	"log"
-	"os"
 	"time"
 
 	"github.com/IBM/sarama"
@@ -11,30 +8,6 @@ import (
 
 // Brokers is the list of Kafka brokers to connect to.
 var Brokers []string
-
-// StdLogger is used to log messages.
-
-// StdLogger is the interface used to log messages.
-// Print and println provides this type of log.
-// print(ctx, err, "key", "value")
-// print(err, "key", "value")
-// print(ctx, "key", "value")
-// print(ctx, err)
-type StdLogger interface {
-	Print(v ...interface{})
-	Printf(format string, v ...interface{})
-	Println(v ...interface{})
-}
-
-// Logger is the instance of a StdLogger interface.
-// By default it is set to discard all log messages via ioutil.Discard,
-// but you can set it to redirect wherever you want.
-var Logger StdLogger = log.New(io.Discard, "[Go-Kafka] ", log.LstdFlags)
-
-// ErrorLogger is the instance of a StdLogger interface.
-// By default it is set to output on stderr all log messages,
-// but you can set it to redirect wherever you want.
-var ErrorLogger StdLogger = log.New(os.Stderr, "[Go-Kafka] ", log.LstdFlags)
 
 // ConsumerMaxRetries is the maximum number of time we want to retry
 // to process an event before throwing the error.
