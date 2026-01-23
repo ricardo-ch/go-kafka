@@ -180,9 +180,13 @@ func MakeHandler(service Service) kafka.Handler {
     }
 ```
 
-... then any `kafka.ErrEventUnretriable` will end up in the dead-letter topic.
+... then any `kafka.ErrEventUnretriable` will end up in the dead-letter topic. It could also be a dedicated retry topic.
 
-`kafka.ErrEventOmitted` is still simply and purely omitted.
+Summary:
+
+`kafka.ErrEventUnretriable` is pushed to the following configured topic if any.
+
+`kafka.ErrEventOmitted` is always omitted, whatever your config is.
 
 ## Instrumenting
 
