@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -12,17 +11,16 @@ import (
 	"github.com/opentracing/opentracing-go"
 )
 
-var (
-	ErrEventUnretriable = errors.New("the event will not be retried")
-	ErrEventOmitted     = errors.New("the event will be omitted")
-)
-
 type HandlerConfig struct {
 	ConsumerMaxRetries  *int
 	DurationBeforeRetry *time.Duration
 	ExponentialBackoff  bool
-	RetryTopic          string
-	DeadletterTopic     string
+	// BackoffFunc is the function used to calculate backoff duration when ExponentialBackoff is true.
+	// If nil, the global ExponentialBackoffFunc (using sarama.NewExponentialBackoff) will be used.
+	// The function signature is: func(retries, maxRetries int) time.Duration
+	BackoffFunc    func(retries, maxRetries int) time.Duration
+	RetryTopic     string
+	DeadletterTopic string
 }
 
 // Handler Processor that handle received kafka messages
@@ -98,7 +96,7 @@ func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (
 	go func() {
 		errConsumer := <-consumerGroup.Errors()
 		if errConsumer != nil {
-			ErrorLogger.Println(err, "error", "sarama error")
+			LogError("sarama consumer error", "error", errConsumer, "consumer_group", groupID)
 		}
 	}()
 
@@ -169,18 +167,23 @@ func (l *listener) Listen(consumerContext context.Context) error {
 		return errors.New("consumerGroup is nil, cannot listen")
 	}
 
+	LogInfo("starting listener", "consumer_group", l.groupID, "topics", l.topics)
+
 	// When a session is over, make consumer join a new session, as long as the context is not cancelled
 	for {
 		// Consume make this consumer join the next session
 		// This block until the `session` is over. (basically until next rebalance)
 		err := l.consumerGroup.Consume(consumerContext, l.topics, l)
 		if err != nil {
+			LogError("consumer group consume error", "error", err, "consumer_group", l.groupID)
 			return err
 		}
 		if err := consumerContext.Err(); err != nil {
 			// Check if context is cancelled
+			LogInfo("listener stopping (context cancelled)", "consumer_group", l.groupID)
 			return err
 		}
+		LogDebug("consumer group session ended, rejoining", "consumer_group", l.groupID)
 	}
 }
 
@@ -189,7 +192,9 @@ func (l *listener) Close() {
 	if l.consumerGroup != nil {
 		err := l.consumerGroup.Close()
 		if err != nil {
-			ErrorLogger.Println(err, "error", "unable to close sarama consumerGroup")
+			LogError("failed to close consumer group", "error", err, "consumer_group", l.groupID)
+		} else {
+			LogInfo("consumer group closed", "consumer_group", l.groupID)
 		}
 	}
 }
@@ -205,25 +210,51 @@ func (l *listener) Close() {
 // ensure that all state is safely protected against race conditions.
 
 // Setup is run at the beginning of a new session, before ConsumeClaim
-func (l *listener) Setup(sarama.ConsumerGroupSession) error {
-	// Mark the consumer as ready
+func (l *listener) Setup(session sarama.ConsumerGroupSession) error {
+	LogInfo("consumer group session started",
+		"consumer_group", l.groupID,
+		"generation_id", session.GenerationID(),
+		"member_id", session.MemberID(),
+		"claims", session.Claims(),
+	)
 	return nil
 }
 
 // Cleanup is run at the end of a session, once all ConsumeClaim goroutines have exited
-func (l *listener) Cleanup(sarama.ConsumerGroupSession) error {
+func (l *listener) Cleanup(session sarama.ConsumerGroupSession) error {
+	LogInfo("consumer group session ended",
+		"consumer_group", l.groupID,
+		"generation_id", session.GenerationID(),
+		"member_id", session.MemberID(),
+	)
 	return nil
 }
 
 // ConsumeClaim must start a consumer loop of ConsumerGroupClaim's Messages().
 func (l *listener) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+	LogDebug("starting to consume partition",
+		"consumer_group", l.groupID,
+		"topic", claim.Topic(),
+		"partition", claim.Partition(),
+		"initial_offset", claim.InitialOffset(),
+	)
+
 	for msg := range claim.Messages() {
 		l.onNewMessage(msg, session)
 	}
+
+	LogDebug("stopped consuming partition",
+		"consumer_group", l.groupID,
+		"topic", claim.Topic(),
+		"partition", claim.Partition(),
+	)
 	return nil
 }
 
 func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.ConsumerGroupSession) {
+	mc := NewMessageContext(msg, l.groupID)
+	LogMessageDebug("received message", mc)
+
 	messageContext := context.WithValue(session.Context(), contextTopicKey, msg.Topic)
 	messageContext = context.WithValue(messageContext, contextkeyKey, msg.Key)
 	messageContext = context.WithValue(messageContext, contextOffsetKey, msg.Offset)
@@ -249,31 +280,34 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 	if err != nil {
 		err = fmt.Errorf("processing failed: %w", err)
 		l.handleErrorMessage(err, handler, msg)
+	} else {
+		LogMessageDebug("message processed successfully", mc)
 	}
 
 	if !errors.Is(err, context.Canceled) {
 		session.MarkMessage(msg, "")
+		LogMessageDebug("message offset committed", mc)
 	}
 }
 
 func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *sarama.ConsumerMessage) {
-	if errors.Is(initialError, ErrEventOmitted) {
+	mc := NewMessageContext(msg, l.groupID)
+
+	if isOmittedError(initialError) {
 		l.handleOmittedMessage(initialError, msg)
 		return
 	}
 
-	// Log
-	ErrorLogger.Println(initialError, "error", "unable to process message, we apply retry topic policy")
+	// Log the error
+	LogMessageError("message processing failed, applying error handling policy", mc, "error", initialError)
 
 	if isRetriableError(initialError) {
 		// First, check if handler's config defines retry topic
 		if handler.Config.RetryTopic != "" {
-			Logger.Printf("sending message to retry topic: %s", handler.Config.RetryTopic)
+			LogMessageInfo("forwarding message to retry topic", mc, "retry_topic", handler.Config.RetryTopic)
 			err := forwardToTopic(l, msg, handler.Config.RetryTopic)
 			if err != nil {
-				errLog := []interface{}{err, "error", "cannot send message to handler's retry topic", "retry_topic", handler.Config.RetryTopic}
-				errLog = append(errLog, extractMessageInfoForLog(msg)...)
-				ErrorLogger.Println(errLog...)
+				LogMessageError("failed to send message to retry topic", mc, "error", err, "retry_topic", handler.Config.RetryTopic)
 			}
 			return
 		}
@@ -281,12 +315,10 @@ func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *
 		// If not, check if global retry topic pattern is defined
 		if PushConsumerErrorsToRetryTopic {
 			topicName := l.deduceTopicNameFromPattern(msg.Topic, RetryTopicPattern)
-			Logger.Printf("sending message to retry topic: %s", topicName)
+			LogMessageInfo("forwarding message to retry topic (global pattern)", mc, "retry_topic", topicName)
 			err := forwardToTopic(l, msg, topicName)
 			if err != nil {
-				errLog := []interface{}{err, "error", "cannot send message to handler's retry topic defined with global pattern", "topic", topicName}
-				errLog = append(errLog, extractMessageInfoForLog(msg)...)
-				ErrorLogger.Println(errLog...)
+				LogMessageError("failed to send message to retry topic", mc, "error", err, "retry_topic", topicName)
 			}
 			return
 		}
@@ -295,12 +327,10 @@ func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *
 	// If the error is not retriable, or if there is no retry topic defined at all, then try to send to dead letter topic
 	// First, check if handler's config defines deadletter topic
 	if handler.Config.DeadletterTopic != "" {
-		Logger.Printf("sending message to handler's deadletter topic: %s", handler.Config.DeadletterTopic)
+		LogMessageInfo("forwarding message to deadletter topic", mc, "deadletter_topic", handler.Config.DeadletterTopic)
 		err := forwardToTopic(l, msg, handler.Config.DeadletterTopic)
 		if err != nil {
-			errLog := []interface{}{err, "error", "cannot send message to handler's deadletter topic", "deadletter_topic", handler.Config.DeadletterTopic}
-			errLog = append(errLog, extractMessageInfoForLog(msg)...)
-			ErrorLogger.Println(errLog...)
+			LogMessageError("failed to send message to deadletter topic", mc, "error", err, "deadletter_topic", handler.Config.DeadletterTopic)
 		}
 		return
 	}
@@ -308,16 +338,16 @@ func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *
 	// If not, check if global deadletter topic pattern is defined
 	if PushConsumerErrorsToDeadletterTopic {
 		topicName := l.deduceTopicNameFromPattern(msg.Topic, DeadletterTopicPattern)
-		Logger.Printf("sending message to deadletter topic: %s", topicName)
+		LogMessageInfo("forwarding message to deadletter topic (global pattern)", mc, "deadletter_topic", topicName)
 		err := forwardToTopic(l, msg, topicName)
 		if err != nil {
-			errorLog := []interface{}{err, "error", "cannot send message to handler's deadletter topic defined with global pattern", "topic", topicName}
-			errorLog = append(errorLog, extractMessageInfoForLog(msg)...)
-			ErrorLogger.Println(errorLog...)
+			LogMessageError("failed to send message to deadletter topic", mc, "error", err, "deadletter_topic", topicName)
 		}
 		return
 	}
+
 	// If we do nothing the message is implicitly omitted
+	LogMessageWarn("message dropped: no retry or deadletter topic configured", mc)
 	if l.instrumenting != nil && l.instrumenting.recordOmittedCounter != nil {
 		l.instrumenting.recordOmittedCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
 	}
@@ -339,12 +369,9 @@ func forwardToTopic(l *listener, msg *sarama.ConsumerMessage, topicName string) 
 	return err
 }
 
-func isRetriableError(initialError error) bool {
-	return !errors.Is(initialError, ErrEventUnretriable) && !errors.Is(initialError, ErrEventOmitted)
-}
-
 func (l *listener) handleOmittedMessage(initialError error, msg *sarama.ConsumerMessage) {
-	ErrorLogger.Println(initialError, "error", "omitted message")
+	mc := NewMessageContext(msg, l.groupID)
+	LogMessageWarn("message omitted by handler", mc, "error", initialError)
 
 	// Inc dropped messages metrics
 	if l.instrumenting != nil && l.instrumenting.recordOmittedCounter != nil {
@@ -354,15 +381,23 @@ func (l *listener) handleOmittedMessage(initialError error, msg *sarama.Consumer
 
 // handleMessageWithRetry call the handler function and retry if it fails
 func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage, retries, retryNumber int, exponentialBackoff bool) (err error) {
+	mc := NewMessageContext(msg, l.groupID)
+
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic happened during handle of message: %v", r)
+			LogMessageError("panic recovered during message processing", mc, "panic", r)
 		}
 	}()
 
 	// Check if context is still valid
 	if ctx.Err() != nil {
 		return ctx.Err()
+	}
+
+	// Log when starting to process a message (debug level)
+	if retryNumber == 0 {
+		LogMessageDebug("processing message", mc)
 	}
 
 	err = handler.Processor(ctx, msg)
@@ -372,21 +407,32 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 			l.instrumenting.recordErrorCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
 		}
 		if shouldRetry(retries, err) {
+			var backoffDuration time.Duration
 			if exponentialBackoff {
-				backoffDuration := calculateExponentialBackoffDuration(retryNumber, handler.Config.DurationBeforeRetry)
-				Logger.Printf("exponential backoff enabled: we will retry in %s", backoffDuration)
-				time.Sleep(backoffDuration)
+				backoffDuration = getBackoffDuration(handler, retryNumber, *handler.Config.ConsumerMaxRetries)
 			} else {
-				time.Sleep(*handler.Config.DurationBeforeRetry)
+				backoffDuration = *handler.Config.DurationBeforeRetry
 			}
+
+			remainingRetries := "infinite"
+			if retries != InfiniteRetries {
+				remainingRetries = fmt.Sprintf("%d", retries)
+			}
+
+			LogMessageWarn("message processing failed, will retry", mc,
+				"error", err,
+				"retry_number", retryNumber+1,
+				"remaining_retries", remainingRetries,
+				"backoff_duration", backoffDuration,
+				"exponential_backoff", exponentialBackoff,
+			)
+
+			time.Sleep(backoffDuration)
+
 			if retries != InfiniteRetries {
 				retries--
-			} else {
-				errLog := []interface{}{ctx, err, "error", "unable to process message we retry indefinitely", "retry_number", retryNumber}
-				errLog = append(errLog, extractMessageInfoForLog(msg)...)
-				ErrorLogger.Println(errLog...)
-				retryNumber++
 			}
+			retryNumber++
 			return l.handleMessageWithRetry(ctx, handler, msg, retries, retryNumber, exponentialBackoff)
 		}
 	}
@@ -398,26 +444,19 @@ func shouldRetry(retries int, err error) bool {
 		return false
 	}
 
-	if errors.Is(err, ErrEventUnretriable) || errors.Is(err, ErrEventOmitted) {
+	if isUnretriableError(err) || isOmittedError(err) {
 		return false
 	}
 
 	return true
 }
 
-func extractMessageInfoForLog(msg *sarama.ConsumerMessage) []interface{} {
-	if msg == nil {
-		return []interface{}{"message", "nil"}
+// getBackoffDuration returns the backoff duration using the handler's BackoffFunc
+// or the global ExponentialBackoffFunc (which uses sarama.NewExponentialBackoff with KIP-580 jitter).
+func getBackoffDuration(handler Handler, retryNumber, maxRetries int) time.Duration {
+	if handler.Config.BackoffFunc != nil {
+		return handler.Config.BackoffFunc(retryNumber, maxRetries)
 	}
-	return []interface{}{"message_topic", msg.Topic, "topic_partition", msg.Partition, "message_offset", msg.Offset, "message_key", string(msg.Key)}
-}
-
-func calculateExponentialBackoffDuration(retries int, baseDuration *time.Duration) time.Duration {
-	var duration time.Duration
-	if baseDuration == nil {
-		duration = 0
-	} else {
-		duration = *baseDuration
-	}
-	return duration * time.Duration(math.Pow(2, float64(retries)))
+	// Use the global ExponentialBackoffFunc which leverages sarama.NewExponentialBackoff
+	return ExponentialBackoffFunc(retryNumber, maxRetries)
 }

@@ -49,6 +49,15 @@ const InfiniteRetries = -1
 // By default 2 seconds.
 var DurationBeforeRetry = 2 * time.Second
 
+// MaxBackoffDuration is the maximum backoff duration for exponential backoff.
+// By default 1 minute.
+var MaxBackoffDuration = 1 * time.Minute
+
+// ExponentialBackoffFunc is the function used to calculate exponential backoff duration.
+// It uses sarama.NewExponentialBackoff which implements KIP-580 with jitter.
+// The function signature is: func(retries, maxRetries int) time.Duration
+var ExponentialBackoffFunc = sarama.NewExponentialBackoff(DurationBeforeRetry, MaxBackoffDuration)
+
 // PushConsumerErrorsToRetryTopic is a boolean to define if messages in error have to be pushed to a retry topic.
 var PushConsumerErrorsToRetryTopic = true
 
@@ -80,5 +89,5 @@ func init() {
 	Config.Producer.Return.Successes = true
 	Config.Producer.RequiredAcks = sarama.WaitForAll
 	Config.Producer.Partitioner = NewJVMCompatiblePartitioner
-	Config.Version = sarama.V1_1_1_0
+	Config.Version = sarama.MaxVersion
 }

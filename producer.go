@@ -49,10 +49,21 @@ func (p *producer) Produce(msg *sarama.ProducerMessage) error {
 
 // Close closes the producer.
 func (p *producer) Close() error {
-	return p.producer.Close()
+	err := p.producer.Close()
+	if err != nil {
+		LogError("failed to close producer", "error", err)
+	} else {
+		LogInfo("producer closed")
+	}
+	return err
 }
 
 func produce(p *producer, msg *sarama.ProducerMessage) error {
-	_, _, err := p.producer.SendMessage(msg)
-	return err
+	partition, offset, err := p.producer.SendMessage(msg)
+	if err != nil {
+		LogError("failed to produce message", "error", err, "topic", msg.Topic)
+		return err
+	}
+	LogDebug("message produced", "topic", msg.Topic, "partition", partition, "offset", offset)
+	return nil
 }

@@ -99,11 +99,64 @@ is_deadletter_configured2 --> defaultDL: Deadletter topic configured
 
 ```
 ### Error types
-Two types of errors are introduced, so that application code can return them whenever relevant
-* `kafka.ErrEventUnretriable` - Errors that should not be retried 
-* `kafka.ErrEventOmitted` - Errors that should lead to the event being omitted without impacting metrics
 
-All the other errors will be considered as "retryable" errors. 
+Two types of special errors are available to control message handling:
+* **Unretriable errors** - Errors that should not be retried (sent to deadletter topic if configured)
+* **Omitted errors** - Errors that should be silently dropped without impacting metrics
+
+All other errors will be considered as "retryable" errors.
+
+#### Using wrapper functions (recommended)
+
+The simplest way to mark an error as unretriable or omitted:
+
+```go
+// This error will not be retried
+return kafka.NewUnretriableError(errors.New("invalid payload format"))
+return kafka.NewUnretriableError(fmt.Errorf("validation failed: %w", err))
+
+// This error will be omitted (no retry, no deadletter, no metric impact)
+return kafka.NewOmittedError(errors.New("duplicate message"))
+return kafka.NewOmittedError(fmt.Errorf("outdated event from %s", eventTime))
+```
+
+The original error is preserved and can be unwrapped with `errors.Is()` or `errors.As()`.
+
+#### Using custom error types
+
+For reusable business errors, implement the `UnretriableError` or `OmittedError` interfaces:
+
+```go
+// Custom error that implements UnretriableError interface
+type ValidationError struct {
+    Field   string
+    Message string
+}
+
+func (e ValidationError) Error() string       { return fmt.Sprintf("%s: %s", e.Field, e.Message) }
+func (e ValidationError) IsUnretriable() bool { return true }
+
+// Custom error that implements OmittedError interface
+type OutdatedEventError struct {
+    EventTime time.Time
+}
+
+func (e OutdatedEventError) Error() string   { return fmt.Sprintf("event from %s is outdated", e.EventTime) }
+func (e OutdatedEventError) IsOmitted() bool { return true }
+
+// Usage in handler
+func myHandler(ctx context.Context, msg *sarama.ConsumerMessage) error {
+    if !isValid(msg) {
+        return ValidationError{Field: "user_id", Message: "required"}
+    }
+    if isOutdated(msg) {
+        return OutdatedEventError{EventTime: msg.Timestamp}
+    }
+    return nil
+}
+```
+
+This approach allows your errors to be detected across different versions of the library and provides better semantics.
 
 Depending on the Retry topic/Deadletter topic/Max retries configuration, the event will be retried, forwarded to a retry topic, or forwarded to a deadletter topic.
 
@@ -117,22 +170,18 @@ This can be globally configured through the following properties:
 These properties can also be configured on a per-topic basis by setting the `ConsumerMaxRetries`, `DurationBeforeRetry` and `ExponentialBackoff` properties on the handler.
 
 If you want to achieve a blocking retry pattern (ie. continuously retrying until the event is successfully consumed), you can set `ConsumerMaxRetries` to `InfiniteRetries` (-1).
-
-If you want to **not** retry specific errors, you can wrap them in a `kafka.ErrEventUnretriable` error before returning them, or return a `kafka.ErrNonRetriable` directly.
-```go
-// This error will not be retried
-err := errors.New("my error")
-return errors.Wrap(kafka.ErrNonRetriable, err.Error())
-
-// This error will also not be retried
-return kafka.ErrNonRetriable
-```
  
 #### exponential backoff 
-You can activate it by setting `ExponentialBackoff` config variable as true. You can set this properties as global, you have to use the configuration per-topic.  This configuration is useful in case of infinite retry configuration.
-The exponential backoff algorithm is defined like this.
+You can activate it by setting `ExponentialBackoff` config variable as true. This configuration is useful in case of infinite retry configuration.
 
-$`retryDuration  = durationBeforeRetry * 2^{retries}`$
+The exponential backoff uses `sarama.NewExponentialBackoff` which implements [KIP-580](https://cwiki.apache.org/confluence/display/KAFKA/KIP-580%3A+Exponential+Backoff+for+Kafka+Clients) with jitter to avoid "thundering herd" issues.
+
+Configuration:
+* `DurationBeforeRetry` (duration) - base duration between retries (default: 2s)
+* `MaxBackoffDuration` (duration) - maximum backoff duration (default: 1m)
+* `BackoffFunc` (optional) - custom backoff function per-handler: `func(retries, maxRetries int) time.Duration`
+
+The backoff duration increases exponentially with jitter, capped at `MaxBackoffDuration`.
 
 ### Deadletter And Retry topics
 
@@ -194,13 +243,78 @@ go func() {
 
 ```
 
+## Logging
+
+The library uses Go's standard `log/slog` package (Go 1.21+) for structured logging with levels.
+
+### Log Levels
+
+- **DEBUG**: Detailed information (message received, processed, committed)
+- **INFO**: General operational information (listener started, session info, messages forwarded to retry/deadletter topics)
+- **WARN**: Warning messages (retries, omitted messages, dropped messages)
+- **ERROR**: Error messages (processing failures, panics, failed forwards)
+
+### Configuration
+
+By default, logging is set to `INFO` level with text format to stderr. You can change the level:
+
+```golang
+import "log/slog"
+
+// Set log level to DEBUG for detailed output
+kafka.SetLogLevel(slog.LevelDebug)
+
+// Set log level to WARN to only see warnings and errors
+kafka.SetLogLevel(slog.LevelWarn)
+```
+
+### Custom Logger
+
+You can provide your own `slog.Logger` for full control over logging:
+
+```golang
+import "log/slog"
+
+// JSON format (ideal for ELK, Datadog, etc.)
+kafka.SetLogger(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+    Level: slog.LevelDebug,
+})))
+
+// Custom handler with your logging infrastructure
+kafka.SetLogger(slog.New(myCustomHandler))
+
+// Disable logging
+kafka.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
+```
+
+### Example Log Output
+
+**Text format (default):**
+```
+time=2024-01-15T10:30:00.000Z level=INFO msg="starting listener" consumer_group=my-group topics="[orders events]"
+time=2024-01-15T10:30:00.100Z level=WARN msg="message processing failed, will retry" topic=orders partition=0 offset=123 error="connection timeout" retry_number=1 remaining_retries=2 backoff_duration=2s
+time=2024-01-15T10:30:02.100Z level=ERROR msg="message processing failed, applying error handling policy" topic=orders partition=0 offset=123 error="processing failed: connection timeout"
+```
+
+**JSON format:**
+```json
+{"time":"2024-01-15T10:30:00.000Z","level":"INFO","msg":"starting listener","consumer_group":"my-group","topics":["orders","events"]}
+{"time":"2024-01-15T10:30:00.100Z","level":"WARN","msg":"message processing failed, will retry","topic":"orders","partition":0,"offset":123,"error":"connection timeout","retry_number":1}
+```
+
 ## Default configuration
 
-Configuration of consumer/producer is opinionated. It aim to resolve simply problems that have taken us by surprise in the past.
+Configuration of consumer/producer is opinionated. It aims to resolve problems that have taken us by surprise in the past.
 For this reason:
-- the default partioner is based on murmur2 instead of the one sarama use by default
-- offset retention is set to 30 days
-- initial offset is oldest
+- **Kafka version** is set to `sarama.MaxVersion` (the latest version supported by sarama) to enable all available features
+- **Partitioner** is based on murmur2 (JVM-compatible) instead of sarama's default
+- **Offset retention** is set to 30 days
+- **Initial offset** is set to oldest
+
+You can override the Kafka version if needed:
+```golang
+kafka.Config.Version = sarama.V2_1_0_0 // or any specific version
+```
 
 ## License
 
