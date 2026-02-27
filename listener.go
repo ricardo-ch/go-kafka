@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -44,18 +45,6 @@ type listener struct {
 	instrumenting      *ConsumerMetricsService
 	tracer             TracingFunc
 }
-
-// listenerContextKey defines the key to provide in context
-// needs to be define to avoid collision.
-// Explanation https://golang.org/pkg/context/#WithValue
-type listenerContextKey string
-
-const (
-	contextTopicKey     = listenerContextKey("topic")
-	contextkeyKey       = listenerContextKey("key")
-	contextOffsetKey    = listenerContextKey("offset")
-	contextTimestampKey = listenerContextKey("timestamp")
-)
 
 // Listener is able to listen multiple topics with one handler by topic
 type Listener interface {
@@ -305,13 +294,7 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 	mc := NewMessageContext(msg, l.groupID)
 	LogMessageDebug("received message", mc)
 
-	messageContext := context.WithValue(session.Context(), contextTopicKey, msg.Topic)
-	messageContext = context.WithValue(messageContext, contextkeyKey, msg.Key)
-	messageContext = context.WithValue(messageContext, contextOffsetKey, msg.Offset)
-	messageContext = context.WithValue(messageContext, contextTimestampKey, msg.Timestamp)
-	for _, h := range msg.Headers {
-		messageContext = context.WithValue(messageContext, listenerContextKey(h.Key), h.Value)
-	}
+	messageContext := session.Context()
 
 	var span opentracing.Span
 	if l.tracer != nil {
@@ -436,7 +419,7 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic happened during handle of message: %v", r)
-			LogMessageError("panic recovered during message processing", mc, "panic", r)
+			LogMessageError("panic recovered during message processing", mc, "panic", r, "stack", string(debug.Stack()))
 		}
 	}()
 

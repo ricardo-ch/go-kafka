@@ -137,6 +137,7 @@ func Test_NewListener_Should_Return_Error_When_Initial_Topic_Equals_Deadletter_T
 }
 
 func Test_NewListener_Happy_Path(t *testing.T) {
+	resetClient()
 	leaderBroker := sarama.NewMockBroker(t, 1)
 
 	// Sarama v1.46 handshake & requests
@@ -175,9 +176,13 @@ func Test_ConsumeClaim_Happy_Path(t *testing.T) {
 	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
 
 	handlerCalled := false
-	var headerVal interface{}
+	var headerVal []byte
 	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
-		headerVal = ctx.Value(listenerContextKey("user-id"))
+		for _, h := range msg.Headers {
+			if string(h.Key) == "user-id" {
+				headerVal = h.Value
+			}
+		}
 		handlerCalled = true
 		return nil
 	}
@@ -194,7 +199,7 @@ func Test_ConsumeClaim_Happy_Path(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.True(t, handlerCalled)
-	assert.Equal(t, string(headerVal.([]byte)), "123456")
+	assert.Equal(t, string(headerVal), "123456")
 	consumerGroupClaim.AssertExpectations(t)
 	consumerGroupSession.AssertExpectations(t)
 }
