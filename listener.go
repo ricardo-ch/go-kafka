@@ -451,7 +451,11 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 			"exponential_backoff", exponentialBackoff,
 		)
 
-		time.Sleep(backoffDuration)
+		select {
+		case <-time.After(backoffDuration):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 
 		if retries != InfiniteRetries {
 			retries--

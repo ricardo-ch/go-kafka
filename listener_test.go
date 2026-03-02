@@ -690,6 +690,41 @@ func Test_handleMessageWithRetry_InfiniteRetriesWithContextCancel(t *testing.T) 
 
 }
 
+func Test_handleMessageWithRetry_ContextCancelDuringBackoff(t *testing.T) {
+	saveGlobals(t)
+
+	handlerCalled := 0
+	ctx, cancel := context.WithCancel(context.Background())
+
+	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+		handlerCalled++
+		return errors.New("always fails")
+	}
+
+	handler := Handler{
+		Processor: handlerProcessor,
+		Config: HandlerConfig{
+			ConsumerMaxRetries:  new(InfiniteRetries),
+			DurationBeforeRetry: new(10 * time.Second),
+		},
+	}
+
+	// Cancel the context after a short delay, while the retry is sleeping in backoff
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	l := listener{}
+	err := l.handleMessageWithRetry(ctx, handler, nil, InfiniteRetries, 0, false)
+	elapsed := time.Since(start)
+
+	assert.Equal(t, 1, handlerCalled)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Less(t, elapsed, 1*time.Second, "should exit promptly, not wait for the full 10s backoff")
+}
+
 // Test that as long as context is not canceled and not error is returned, `Consume` is called again
 // (when rebalance is called, the consumer will be part of next session)
 func Test_Listen_Happy_Path(t *testing.T) {
