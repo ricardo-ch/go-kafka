@@ -1,9 +1,13 @@
 package kafka
 
 // WithInstrumenting adds the instrumenting layer on a listener.
+// Handlers are wrapped once at creation time rather than per-message.
 func WithInstrumenting() ListenerOption {
 	return func(l *listener) {
 		l.instrumenting = NewConsumerMetricsService(l.groupID)
+		for topic, handler := range l.handlers {
+			l.handlers[topic] = l.instrumenting.Instrumentation(handler)
+		}
 	}
 }
 

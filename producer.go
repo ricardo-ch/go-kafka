@@ -9,23 +9,23 @@ type Producer interface {
 	Close() error
 }
 
-// ProducerHandler is a function that handles the production of a message. It is exposed to allow for easy middleware building.
-type ProducerHandler func(p *producer, msg *sarama.ProducerMessage) error
+// producerHandler is a function that handles the production of a message.
+type producerHandler func(p *producer, msg *sarama.ProducerMessage) error
 
 type producer struct {
-	handler       ProducerHandler
+	handler       producerHandler
 	producer      sarama.SyncProducer
 	instrumenting *ProducerMetricsService
 }
 
 // NewProducer creates a new producer that uses the default sarama client.
 func NewProducer(options ...ProducerOption) (Producer, error) {
-	client, err := getClient()
+	c, err := getClient()
 	if err != nil {
 		return nil, err
 	}
 
-	p, err := sarama.NewSyncProducerFromClient(*client)
+	p, err := sarama.NewSyncProducerFromClient(c)
 	if err != nil {
 		return nil, err
 	}

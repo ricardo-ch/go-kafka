@@ -25,10 +25,8 @@ func WithTracing(tracer TracingFunc) ListenerOption {
 	}
 }
 
-// DefaultTracing implements TracingFunc using OpenTelemetry.
-// It extracts W3C Trace Context headers from the Kafka message, then creates a child span.
-// Usage: `listener, err = kafka.NewListener(brokers, appName, handlers, kafka.WithTracing(kafka.DefaultTracing))`
-func DefaultTracing(ctx context.Context, msg *sarama.ConsumerMessage) (trace.Span, context.Context) {
+// extractCarrierFromMessage extracts propagation headers from a Kafka message into a MapCarrier.
+func extractCarrierFromMessage(ctx context.Context, msg *sarama.ConsumerMessage) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -36,20 +34,26 @@ func DefaultTracing(ctx context.Context, msg *sarama.ConsumerMessage) (trace.Spa
 	for _, h := range msg.Headers {
 		carrier[string(h.Key)] = string(h.Value)
 	}
-	ctx = otel.GetTextMapPropagator().Extract(ctx, carrier)
+	return otel.GetTextMapPropagator().Extract(ctx, carrier)
+}
 
-	tracer := otel.Tracer(tracerName)
+// DefaultTracing implements TracingFunc using OpenTelemetry.
+// It extracts W3C Trace Context headers from the Kafka message, then creates a child span
+// with messaging-specific attributes.
+// Usage: `listener, err = kafka.NewListener(appName, handlers, kafka.WithTracing(kafka.DefaultTracing))`
+func DefaultTracing(ctx context.Context, msg *sarama.ConsumerMessage) (trace.Span, context.Context) {
+	ctx = extractCarrierFromMessage(ctx, msg)
+
 	spanName := fmt.Sprintf("message from %s", msg.Topic)
-	attrs := []attribute.KeyValue{
+	ctx, span := otel.Tracer(tracerName).Start(ctx, spanName, trace.WithAttributes(
 		attribute.Int64("messaging.kafka.offset", msg.Offset),
 		attribute.Int64("messaging.kafka.partition", int64(msg.Partition)),
 		attribute.String("messaging.kafka.message_key", string(msg.Key)),
-	}
-	ctx, span := tracer.Start(ctx, spanName, trace.WithAttributes(attrs...))
+	))
 	return span, ctx
 }
 
-// GetKafkaHeadersFromContext fetches tracing metadata from context and returns them in format []RecordHeader.
+// GetKafkaHeadersFromContext fetches tracing metadata from context and returns them as []RecordHeader.
 // Uses W3C Trace Context format (traceparent, tracestate).
 func GetKafkaHeadersFromContext(ctx context.Context) []sarama.RecordHeader {
 	carrier := make(propagation.MapCarrier)
@@ -62,25 +66,17 @@ func GetKafkaHeadersFromContext(ctx context.Context) []sarama.RecordHeader {
 	return recordHeaders
 }
 
-// GetContextFromKafkaMessage fetches tracing headers from the Kafka message and creates a span.
+// GetContextFromKafkaMessage extracts tracing headers from a Kafka message and creates a span.
 // The returned span must be ended by the caller (e.g. defer span.End()).
 func GetContextFromKafkaMessage(ctx context.Context, msg *sarama.ConsumerMessage) (trace.Span, context.Context) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	carrier := make(propagation.MapCarrier, len(msg.Headers))
-	for _, h := range msg.Headers {
-		carrier[string(h.Key)] = string(h.Value)
-	}
-	ctx = otel.GetTextMapPropagator().Extract(ctx, carrier)
+	ctx = extractCarrierFromMessage(ctx, msg)
 
-	tracer := otel.Tracer(tracerName)
 	spanName := fmt.Sprintf("message from %s", msg.Topic)
-	ctx, span := tracer.Start(ctx, spanName)
+	ctx, span := otel.Tracer(tracerName).Start(ctx, spanName)
 	return span, ctx
 }
 
-// SerializeKafkaHeadersFromContext fetches tracing metadata from context and serializes it into a JSON map[string]string
+// SerializeKafkaHeadersFromContext fetches tracing metadata from context and serializes it into a JSON map[string]string.
 func SerializeKafkaHeadersFromContext(ctx context.Context) (string, error) {
 	carrier := make(propagation.MapCarrier)
 	otel.GetTextMapPropagator().Inject(ctx, carrier)
@@ -88,18 +84,18 @@ func SerializeKafkaHeadersFromContext(ctx context.Context) (string, error) {
 	return string(kafkaHeadersJSON), err
 }
 
-// DeserializeContextFromKafkaHeaders fetches tracing headers from JSON encoded carrier and returns the context
-func DeserializeContextFromKafkaHeaders(ctx context.Context, kafkaheaders string) (context.Context, error) {
+// DeserializeContextFromKafkaHeaders extracts tracing headers from a JSON-encoded carrier and returns the enriched context.
+// On error, the original context is returned alongside the error.
+func DeserializeContextFromKafkaHeaders(ctx context.Context, kafkaHeaders string) (context.Context, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
 	var rawHeaders map[string]string
-	if err := json.Unmarshal([]byte(kafkaheaders), &rawHeaders); err != nil {
-		return nil, err
+	if err := json.Unmarshal([]byte(kafkaHeaders), &rawHeaders); err != nil {
+		return ctx, err
 	}
 
 	carrier := propagation.MapCarrier(rawHeaders)
-	ctx = otel.GetTextMapPropagator().Extract(ctx, carrier)
-	return ctx, nil
+	return otel.GetTextMapPropagator().Extract(ctx, carrier), nil
 }

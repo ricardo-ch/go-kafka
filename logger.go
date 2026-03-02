@@ -157,12 +157,12 @@ func LogErrorContext(ctx context.Context, msg string, args ...any) {
 
 // logWithMessageContext is a helper that combines message context with additional args.
 func logWithMessageContext(mc MessageContext, args ...any) []any {
-	result := make([]any, 0, len(mc.LogAttrs())*2+len(args))
-	for _, attr := range mc.LogAttrs() {
+	attrs := mc.LogAttrs()
+	result := make([]any, 0, len(attrs)*2+len(args))
+	for _, attr := range attrs {
 		result = append(result, attr.Key, attr.Value.Any())
 	}
-	result = append(result, args...)
-	return result
+	return append(result, args...)
 }
 
 // LogMessageDebug logs a debug message with message context.

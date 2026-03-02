@@ -8,27 +8,21 @@ import (
 )
 
 var (
-	client     *sarama.Client
+	client     sarama.Client
 	clientErr  error
 	clientOnce sync.Once
 )
 
-func getClient() (*sarama.Client, error) {
+func getClient() (sarama.Client, error) {
 	clientOnce.Do(func() {
 		if len(Brokers) == 0 {
 			clientErr = errors.New("cannot create new client, Brokers must be specified")
 			return
 		}
 
-		var c sarama.Client
-		c, clientErr = sarama.NewClient(Brokers, Config)
-		if clientErr == nil {
-			client = &c
-		}
+		client, clientErr = sarama.NewClient(Brokers, Config)
 	})
 
-	// If Brokers is empty, we should return the error even if clientOnce has already run
-	// This is needed for tests that change Brokers dynamically
 	if len(Brokers) == 0 {
 		return nil, errors.New("cannot create new client, Brokers must be specified")
 	}

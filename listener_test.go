@@ -2,11 +2,10 @@ package kafka
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
-
-	"errors"
 
 	"github.com/IBM/sarama"
 	"github.com/ricardo-ch/go-kafka/v3/mocks"
@@ -19,8 +18,8 @@ var (
 		Processor: func(ctx context.Context, msg *sarama.ConsumerMessage) error { return nil },
 	}
 	testHandlerConfig = HandlerConfig{
-		ConsumerMaxRetries:  Ptr(10),
-		DurationBeforeRetry: Ptr(1 * time.Millisecond),
+		ConsumerMaxRetries:  new(10),
+		DurationBeforeRetry: new(1 * time.Millisecond),
 		RetryTopic:          "retry-topic",
 		DeadletterTopic:     "deadletter-topic",
 	}
@@ -30,7 +29,24 @@ var (
 	}
 )
 
-// setupConsumerGroupClaimMock configures the ConsumerGroupClaim mock with default values for logging
+// saveGlobals saves current global state and restores it via t.Cleanup.
+func saveGlobals(t *testing.T) {
+	t.Helper()
+	origBrokers := Brokers
+	origMaxRetries := ConsumerMaxRetries
+	origDuration := DurationBeforeRetry
+	origRetryTopic := PushConsumerErrorsToRetryTopic
+	origDeadletter := PushConsumerErrorsToDeadletterTopic
+	t.Cleanup(func() {
+		Brokers = origBrokers
+		ConsumerMaxRetries = origMaxRetries
+		DurationBeforeRetry = origDuration
+		PushConsumerErrorsToRetryTopic = origRetryTopic
+		PushConsumerErrorsToDeadletterTopic = origDeadletter
+		resetClient()
+	})
+}
+
 func setupConsumerGroupClaimMock(claim *mocks.ConsumerGroupClaim, topic string, partition int32, msgChan <-chan *sarama.ConsumerMessage) {
 	claim.On("Messages").Return(msgChan)
 	claim.On("Topic").Return(topic)
@@ -39,52 +55,44 @@ func setupConsumerGroupClaimMock(claim *mocks.ConsumerGroupClaim, topic string, 
 }
 
 func Test_NewListener_Should_Return_Error_When_No_Broker_Provided(t *testing.T) {
-	// Arrange
-	handlers := map[string]Handler{"topic": testHandler}
-	groupID := "groupID"
+	saveGlobals(t)
 	Brokers = []string{}
 
-	// Act
-	l, err := NewListener(groupID, handlers)
+	handlers := map[string]Handler{"topic": testHandler}
+	l, err := NewListener("groupID", handlers)
 
-	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, l)
+	assert.Contains(t, err.Error(), "Brokers")
 }
 
 func Test_NewListener_Should_Return_Error_When_No_GroupID_Provided(t *testing.T) {
-	// Arrange
-	handlers := map[string]Handler{"topic": testHandler}
-	groupID := ""
+	saveGlobals(t)
 	Brokers = []string{"localhost:9092"}
 
-	// Act
-	l, err := NewListener(groupID, handlers)
+	handlers := map[string]Handler{"topic": testHandler}
+	l, err := NewListener("", handlers)
 
-	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, l)
+	assert.Contains(t, err.Error(), "group_id")
 }
 
 func Test_NewListener_Should_Return_Error_When_No_Handlers_Provided(t *testing.T) {
-	// Arrange
-	handlers := map[string]Handler{}
-	groupID := "groupID"
+	saveGlobals(t)
 	Brokers = []string{"localhost:9092"}
 
-	// Act
-	l, err := NewListener(groupID, handlers)
+	l, err := NewListener("groupID", map[string]Handler{})
 
-	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, l)
+	assert.Contains(t, err.Error(), "handlers")
 }
 
 func Test_NewListener_Should_Return_Error_When_Initial_Topic_Equals_Retry_Topic(t *testing.T) {
-	// Arrange
+	saveGlobals(t)
 	leaderBroker := sarama.NewMockBroker(t, 1)
 
-	// Sarama v1.46 handshake & requests
 	md := sarama.NewMockMetadataResponse(t).
 		SetBroker(leaderBroker.Addr(), leaderBroker.BrokerID()).
 		SetLeader("retry-topic", 0, leaderBroker.BrokerID())
@@ -97,22 +105,19 @@ func Test_NewListener_Should_Return_Error_When_Initial_Topic_Equals_Retry_Topic(
 	})
 
 	Brokers = []string{leaderBroker.Addr()}
-
 	handlers := map[string]Handler{"retry-topic": testHandlerWithConfig}
 
-	// Act
 	l, err := NewListener("groupID", handlers)
 
-	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, l)
+	assert.Contains(t, err.Error(), "retry topic")
 }
 
 func Test_NewListener_Should_Return_Error_When_Initial_Topic_Equals_Deadletter_Topic(t *testing.T) {
-	// Arrange
+	saveGlobals(t)
 	leaderBroker := sarama.NewMockBroker(t, 1)
 
-	// Sarama v1.46 handshake & requests
 	md := sarama.NewMockMetadataResponse(t).
 		SetBroker(leaderBroker.Addr(), leaderBroker.BrokerID()).
 		SetLeader("deadletter-topic", 0, leaderBroker.BrokerID())
@@ -125,22 +130,19 @@ func Test_NewListener_Should_Return_Error_When_Initial_Topic_Equals_Deadletter_T
 	})
 
 	Brokers = []string{leaderBroker.Addr()}
-
 	handlers := map[string]Handler{"deadletter-topic": testHandlerWithConfig}
 
-	// Act
 	l, err := NewListener("groupID", handlers)
 
-	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, l)
+	assert.Contains(t, err.Error(), "deadletter topic")
 }
 
 func Test_NewListener_Happy_Path(t *testing.T) {
-	resetClient()
+	saveGlobals(t)
 	leaderBroker := sarama.NewMockBroker(t, 1)
 
-	// Sarama v1.46 handshake & requests
 	md := sarama.NewMockMetadataResponse(t).
 		SetBroker(leaderBroker.Addr(), leaderBroker.BrokerID()).
 		SetLeader("topic-test", 0, leaderBroker.BrokerID())
@@ -156,8 +158,10 @@ func Test_NewListener_Happy_Path(t *testing.T) {
 
 	handlers := map[string]Handler{"topic-test": testHandler}
 	listener, err := NewListener("groupID", handlers)
+
+	assert.NoError(t, err)
 	assert.NotNil(t, listener)
-	assert.Nil(t, err)
+	assert.Equal(t, "groupID", listener.GroupID())
 }
 
 func Test_ConsumeClaim_Happy_Path(t *testing.T) {
@@ -205,9 +209,8 @@ func Test_ConsumeClaim_Happy_Path(t *testing.T) {
 }
 
 func Test_ConsumeClaim_Message_Error_WithErrorTopic(t *testing.T) {
-	// Reduce the retry interval to speed up the test
+	saveGlobals(t)
 	DurationBeforeRetry = 1 * time.Millisecond
-
 	PushConsumerErrorsToDeadletterTopic = true
 
 	msgChanel := make(chan *sarama.ConsumerMessage, 1)
@@ -245,14 +248,13 @@ func Test_ConsumeClaim_Message_Error_WithErrorTopic(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.True(t, handlerCalled)
-	// Note: Error logging is now handled by the structured logger (DefaultStructuredLogger)
-	// and can be seen in the test output
 	consumerGroupClaim.AssertExpectations(t)
 	consumerGroupSession.AssertExpectations(t)
 	producer.AssertExpectations(t)
 }
 
 func Test_ConsumeClaim_Message_Error_WithPanicTopic(t *testing.T) {
+	saveGlobals(t)
 	PushConsumerErrorsToDeadletterTopic = true
 
 	msgChanel := make(chan *sarama.ConsumerMessage, 1)
@@ -290,17 +292,15 @@ func Test_ConsumeClaim_Message_Error_WithPanicTopic(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.True(t, handlerCalled)
-	// Note: Error logging is now handled by the structured logger (DefaultStructuredLogger)
-	// and can be seen in the test output
 	consumerGroupClaim.AssertExpectations(t)
 	consumerGroupSession.AssertExpectations(t)
 	producer.AssertExpectations(t)
 }
 
 func Test_ConsumeClaim_Message_Error_WithHandlerSpecificRetryTopic(t *testing.T) {
-	PushConsumerErrorsToRetryTopic = false // global value that is overwritten for the handler in this test
+	saveGlobals(t)
+	PushConsumerErrorsToRetryTopic = false
 
-	// Arrange
 	msgChanel := make(chan *sarama.ConsumerMessage, 1)
 	msgChanel <- &sarama.ConsumerMessage{
 		Topic: "topic-test",
@@ -325,9 +325,9 @@ func Test_ConsumeClaim_Message_Error_WithHandlerSpecificRetryTopic(t *testing.T)
 	handler := Handler{
 		Processor: handlerProcessor,
 		Config: HandlerConfig{
-			ConsumerMaxRetries:  Ptr(3),
-			DurationBeforeRetry: Ptr(1 * time.Millisecond),
-			RetryTopic:          "retry-topic", // Here is the important part
+			ConsumerMaxRetries:  new(3),
+			DurationBeforeRetry: new(1 * time.Millisecond),
+			RetryTopic:          "retry-topic",
 		},
 	}
 
@@ -342,18 +342,16 @@ func Test_ConsumeClaim_Message_Error_WithHandlerSpecificRetryTopic(t *testing.T)
 	// Assert
 	assert.NoError(t, err)
 	assert.True(t, handlerCalled)
-	// Note: Error logging is now handled by the structured logger (DefaultStructuredLogger)
-	// and can be seen in the test output
 	consumerGroupClaim.AssertExpectations(t)
 	consumerGroupSession.AssertExpectations(t)
 	producer.AssertExpectations(t)
 }
 
 func Test_ConsumeClaim_Message_Error_Context_Cancelled_Does_Not_Commit_Offset(t *testing.T) {
+	saveGlobals(t)
 	PushConsumerErrorsToRetryTopic = false
 	PushConsumerErrorsToDeadletterTopic = false
 
-	// Arrange
 	msgChanel := make(chan *sarama.ConsumerMessage, 1)
 	msgChanel <- &sarama.ConsumerMessage{
 		Topic: "topic-test",
@@ -376,8 +374,8 @@ func Test_ConsumeClaim_Message_Error_Context_Cancelled_Does_Not_Commit_Offset(t 
 	handler := Handler{
 		Processor: handlerProcessor,
 		Config: HandlerConfig{
-			ConsumerMaxRetries:  Ptr(3),
-			DurationBeforeRetry: Ptr(1 * time.Millisecond),
+			ConsumerMaxRetries:  new(3),
+			DurationBeforeRetry: new(1 * time.Millisecond),
 		},
 	}
 
@@ -398,20 +396,17 @@ func Test_ConsumeClaim_Message_Error_Context_Cancelled_Does_Not_Commit_Offset(t 
 }
 
 func Test_handleErrorMessage_OmittedError(t *testing.T) {
-	omittedError := errors.New("This error should be omitted")
+	producer := &mocks.MockProducer{}
+	l := listener{deadletterProducer: producer}
 
-	l := listener{}
+	omittedErr := fmt.Errorf("%w: %w", errors.New("should be omitted"), ErrEventOmitted)
+	l.handleErrorMessage(omittedErr, Handler{}, &sarama.ConsumerMessage{Topic: "test"})
 
-	// This test verifies that omitted errors are handled correctly.
-	// The structured logger will output a WARN level message "message omitted by handler"
-	// which can be seen in the test output.
-	l.handleErrorMessage(fmt.Errorf("%w: %w", omittedError, ErrEventOmitted), Handler{}, nil)
-
-	// If we reach here without panic, the error was handled correctly
+	producer.AssertNotCalled(t, "Produce", mock.Anything)
 }
 
 func Test_handleMessageWithRetry(t *testing.T) {
-	// Reduce the retry interval to speed up the test
+	saveGlobals(t)
 	DurationBeforeRetry = 1 * time.Millisecond
 
 	err := errors.New("This error should be retried")
@@ -426,13 +421,14 @@ func Test_handleMessageWithRetry(t *testing.T) {
 	}
 
 	l := listener{}
-	l.handleMessageWithRetry(context.Background(), handler, nil, 3, 0, false)
+	retErr := l.handleMessageWithRetry(context.Background(), handler, nil, 3, 0, false)
 
 	assert.Equal(t, 4, handlerCalled)
+	assert.ErrorIs(t, retErr, err)
 }
 
 func Test_handleMessageWithRetryWithBackoff(t *testing.T) {
-	// Reduce the retry interval to speed up the test
+	saveGlobals(t)
 	DurationBeforeRetry = 1 * time.Millisecond
 
 	err := errors.New("This error should be retried")
@@ -447,9 +443,10 @@ func Test_handleMessageWithRetryWithBackoff(t *testing.T) {
 	}
 
 	l := listener{}
-	l.handleMessageWithRetry(context.Background(), handler, nil, 3, 0, true)
+	retErr := l.handleMessageWithRetry(context.Background(), handler, nil, 3, 0, true)
 
 	assert.Equal(t, 4, handlerCalled)
+	assert.ErrorIs(t, retErr, err)
 }
 
 func Test_handleMessageWithRetry_UnretriableError(t *testing.T) {
@@ -523,13 +520,12 @@ func Test_handleMessageWithRetry_CustomUnretriableError(t *testing.T) {
 }
 
 func Test_handleErrorMessage_CustomOmittedError(t *testing.T) {
-	l := listener{}
+	producer := &mocks.MockProducer{}
+	l := listener{deadletterProducer: producer}
 
-	// This test verifies that custom omitted errors are handled correctly.
-	// The structured logger will output a WARN level message "message omitted by handler"
-	l.handleErrorMessage(customOmittedError{message: "custom omitted error"}, Handler{}, nil)
+	l.handleErrorMessage(customOmittedError{message: "custom omitted error"}, Handler{}, &sarama.ConsumerMessage{Topic: "test"})
 
-	// If we reach here without panic, the custom error was handled correctly
+	producer.AssertNotCalled(t, "Produce", mock.Anything)
 }
 
 func Test_NewUnretriableError(t *testing.T) {
@@ -597,16 +593,16 @@ func Test_handleMessageWithRetry_NewUnretriableError(t *testing.T) {
 }
 
 func Test_handleErrorMessage_NewOmittedError(t *testing.T) {
-	l := listener{}
+	producer := &mocks.MockProducer{}
+	l := listener{deadletterProducer: producer}
 
-	// This test verifies that NewOmittedError wrapped errors are handled correctly
-	l.handleErrorMessage(NewOmittedError(errors.New("outdated event")), Handler{}, nil)
+	l.handleErrorMessage(NewOmittedError(errors.New("outdated event")), Handler{}, &sarama.ConsumerMessage{Topic: "test"})
 
-	// If we reach here without panic, the error was handled correctly
+	producer.AssertNotCalled(t, "Produce", mock.Anything)
 }
 
 func Test_handleMessageWithRetry_InfiniteRetries(t *testing.T) {
-	// Reduce the retry interval to speed up the test
+	saveGlobals(t)
 	DurationBeforeRetry = 1 * time.Millisecond
 
 	err := errors.New("This error should be retried")
@@ -633,8 +629,9 @@ func Test_handleMessageWithRetry_InfiniteRetries(t *testing.T) {
 	assert.Equal(t, 5, handlerCalled)
 
 }
+
 func Test_handleMessageWithRetry_InfiniteRetriesWithBackoff(t *testing.T) {
-	// Reduce the retry interval to speed up the test
+	saveGlobals(t)
 	DurationBeforeRetry = 1 * time.Millisecond
 
 	err := errors.New("This error should be retried")
@@ -663,7 +660,7 @@ func Test_handleMessageWithRetry_InfiniteRetriesWithBackoff(t *testing.T) {
 }
 
 func Test_handleMessageWithRetry_InfiniteRetriesWithContextCancel(t *testing.T) {
-	// Reduce the retry interval to speed up the test
+	saveGlobals(t)
 	DurationBeforeRetry = 1 * time.Millisecond
 	err := errors.New("This error should be retried")
 

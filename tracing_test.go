@@ -61,9 +61,10 @@ func Test_SerializeKafkaHeadersFromContext_EmptyContext(t *testing.T) {
 }
 
 func Test_DeserializeContextFromKafkaHeaders_InvalidJSON(t *testing.T) {
-	ctx, err := DeserializeContextFromKafkaHeaders(context.Background(), "invalid json")
+	baseCtx := context.Background()
+	ctx, err := DeserializeContextFromKafkaHeaders(baseCtx, "invalid json")
 	assert.Error(t, err)
-	assert.Nil(t, ctx)
+	assert.Equal(t, baseCtx, ctx)
 }
 
 func Test_DeserializeContextFromKafkaHeaders_ValidEmptyJSON(t *testing.T) {
@@ -71,4 +72,3 @@ func Test_DeserializeContextFromKafkaHeaders_ValidEmptyJSON(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, ctx)
 }
-
