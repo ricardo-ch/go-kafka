@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
-	"github.com/opentracing/opentracing-go"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type HandlerConfig struct {
@@ -296,11 +296,11 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 
 	messageContext := session.Context()
 
-	var span opentracing.Span
+	var span trace.Span
 	if l.tracer != nil {
 		span, messageContext = l.tracer(messageContext, msg)
 		if span != nil {
-			defer span.Finish()
+			defer span.End()
 		}
 	}
 

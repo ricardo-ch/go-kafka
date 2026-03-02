@@ -10,8 +10,7 @@ The listener is able to consume from multiple topics, and will execute a separat
 > - The library now relies on the IBM/sarama library instead of Shopify/sarama, which is no longer maintained.
 > - The `kafka.Handler` type has been changed to a struct containing both the function to execute and the handler's optional configuration.
 > - The global variable `PushConsumerErrorsToTopic` has been replaced by the `PushConsumerErrorsToRetryTopic` and `PushConsumerErrorsToDeadletterTopic` properties on the handler.
->
-> These two changes should be the only breaking changes in the v3 release. The rest of the library should be compatible with the previous version. 
+> - **Tracing**: OpenTracing has been replaced by OpenTelemetry (OTel). The propagation format is now W3C Trace Context (`traceparent`, `tracestate`) instead of Jaeger/OpenTracing format. Remove the `github.com/ricardo-ch/go-tracing` dependency; configure OTel in your application instead. 
 
 ## Quick start
 
@@ -227,21 +226,28 @@ The following metrics are available:
 | kafka_producer_dead_letter_created_total | kafka_topic | Number of messages sent to a dead letter topic |
 | kafka_producer_record_error_total | kafka_topic | Number of errors when sending a message |
 
-To activate the tracing on go-Kafka:
+To activate distributed tracing (OpenTelemetry) on go-Kafka:
 
 ```golang
-// define your listener
-listener, _ := kafka.NewListener(brokers, "my-consumer-group", handlers, kafka.WithInstrumenting())
+// Configure OpenTelemetry in your application (TracerProvider, exporter, etc.)
+// See https://opentelemetry.io/docs/languages/go/getting-started/
+
+// Define your listener with tracing
+listener, _ := kafka.NewListener("my-consumer-group", handlers,
+	kafka.WithInstrumenting(),
+	kafka.WithTracing(kafka.DefaultTracing),
+)
 defer listener.Close()
 
-// Instances a new HTTP server for metrics using prometheus 
+// Instances a new HTTP server for metrics using prometheus
 go func() {
-	httpAddr := ":8080" 
+	httpAddr := ":8080"
 	mux.Handle("/metrics", promhttp.Handler())
 	errc <- http.ListenAndServe(httpAddr, mux)
 }()
-
 ```
+
+Tracing uses W3C Trace Context format (`traceparent`, `tracestate` headers). Use `GetKafkaHeadersFromContext` when producing messages to propagate the trace context.
 
 ## Logging
 
