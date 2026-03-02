@@ -308,6 +308,9 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 	err := l.handleMessageWithRetry(messageContext, handler, msg, *handler.Config.ConsumerMaxRetries, 0, handler.Config.ExponentialBackoff)
 	if err != nil {
 		err = fmt.Errorf("processing failed: %w", err)
+		if l.instrumenting != nil && l.instrumenting.recordErrorCounter != nil && !isOmittedError(err) {
+			l.instrumenting.recordErrorCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
+		}
 		l.handleErrorMessage(err, handler, msg)
 	} else {
 		LogMessageDebug("message processed successfully", mc)
@@ -422,10 +425,6 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 		err := l.safeProcess(ctx, handler, msg, mc)
 		if err == nil {
 			return nil
-		}
-
-		if l.instrumenting != nil && l.instrumenting.recordErrorCounter != nil {
-			l.instrumenting.recordErrorCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
 		}
 
 		if !shouldRetry(retries, err) {
