@@ -447,7 +447,7 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 			"error", err,
 			"retry_number", retryNumber+1,
 			"remaining_retries", remainingRetries,
-			"backoff_duration", backoffDuration.String(),
+			"backoff_duration", backoffDuration.Round(10*time.Millisecond).String(),
 			"exponential_backoff", exponentialBackoff,
 		)
 
