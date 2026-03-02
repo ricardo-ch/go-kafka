@@ -19,8 +19,8 @@ type HandlerConfig struct {
 	// BackoffFunc is the function used to calculate backoff duration when ExponentialBackoff is true.
 	// If nil, the global ExponentialBackoffFunc (using sarama.NewExponentialBackoff) will be used.
 	// The function signature is: func(retries, maxRetries int) time.Duration
-	BackoffFunc    func(retries, maxRetries int) time.Duration
-	RetryTopic     string
+	BackoffFunc     func(retries, maxRetries int) time.Duration
+	RetryTopic      string
 	DeadletterTopic string
 }
 
@@ -448,7 +448,7 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 			"error", err,
 			"retry_number", retryNumber+1,
 			"remaining_retries", remainingRetries,
-			"backoff_duration", backoffDuration,
+			"backoff_duration", backoffDuration.String(),
 			"exponential_backoff", exponentialBackoff,
 		)
 
