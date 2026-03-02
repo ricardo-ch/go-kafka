@@ -13,21 +13,29 @@ import (
 // timeFormat is the timestamp format used in logs (millisecond precision).
 const timeFormat = "15:04:05.000"
 
-// defaultHandlerOptions returns the default slog.HandlerOptions with lowercase level
-// and short timestamp format.
+// LowercaseLevelAttr is a slog ReplaceAttr function that converts log levels to lowercase.
+// Use it when creating a custom handler to keep levels consistent (info, debug, warn, error).
+//
+// Example:
+//
+//	kafka.SetLogger(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+//	    Level:       slog.LevelInfo,
+//	    ReplaceAttr: kafka.LowercaseLevelAttr,
+//	})))
+func LowercaseLevelAttr(groups []string, a slog.Attr) slog.Attr {
+	if a.Key == slog.LevelKey {
+		a.Value = slog.StringValue(strings.ToLower(a.Value.Any().(slog.Level).String()))
+	}
+	return a
+}
+
 func defaultHandlerOptions(level slog.Level) *slog.HandlerOptions {
 	return &slog.HandlerOptions{
 		Level: level,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
-			// Convert level to lowercase (info, debug, warn, error)
-			if a.Key == slog.LevelKey {
-				level := a.Value.Any().(slog.Level)
-				a.Value = slog.StringValue(strings.ToLower(level.String()))
-			}
-			// Format time with millisecond precision (HH:MM:SS.mmm)
+			a = LowercaseLevelAttr(groups, a)
 			if a.Key == slog.TimeKey {
-				t := a.Value.Time()
-				a.Value = slog.StringValue(t.Format(timeFormat))
+				a.Value = slog.StringValue(a.Value.Time().Format(timeFormat))
 			}
 			return a
 		},

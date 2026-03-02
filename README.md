@@ -293,6 +293,22 @@ kafka.SetLogger(slog.New(myCustomHandler))
 kafka.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
 ```
 
+### Lowercase log levels
+
+By default, `slog` outputs log levels in uppercase (`INFO`, `WARN`, `ERROR`).
+The default go-kafka logger already outputs lowercase levels, but if you provide a custom logger via `SetLogger()`, you need to opt-in explicitly.
+
+Use the exported `LowercaseLevelAttr` helper as `ReplaceAttr` in your handler options:
+
+```golang
+kafka.SetLogger(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+    Level:       slog.LevelInfo,
+    ReplaceAttr: kafka.LowercaseLevelAttr,
+})).With("component", "go-kafka"))
+```
+
+This produces `"level":"info"` instead of `"level":"INFO"`.
+
 ### Example Log Output
 
 **Text format (default):**
