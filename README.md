@@ -46,7 +46,7 @@ message := &sarama.ProducerMessage{
 	Topic: "my-topic",
 	Value: sarama.StringEncoder("my-message"),
 }
-_ = producer.Produce(message)
+_ = producer.Produce(ctx, message)
 ```
 
 ## Features
@@ -251,7 +251,7 @@ Tracing uses W3C Trace Context format (`traceparent`, `tracestate` headers). Use
 
 ## Logging
 
-The library uses Go's standard `log/slog` package (Go 1.21+) for structured logging with levels.
+The library uses Go's standard `log/slog` package (Go 1.21+) for structured logging. There are no wrapper functions — the library calls `slog.Default()` directly.
 
 ### Log Levels
 
@@ -262,66 +262,54 @@ The library uses Go's standard `log/slog` package (Go 1.21+) for structured logg
 
 ### Configuration
 
-By default, logging is set to `INFO` level with text format to stderr. You can change the level:
+Configure logging via `slog.SetDefault()` in your application before creating listeners/producers:
 
 ```golang
 import "log/slog"
 
-// Set log level to DEBUG for detailed output
-kafka.SetLogLevel(slog.LevelDebug)
-
-// Set log level to WARN to only see warnings and errors
-kafka.SetLogLevel(slog.LevelWarn)
-```
-
-### Custom Logger
-
-You can provide your own `slog.Logger` for full control over logging:
-
-```golang
-import "log/slog"
-
-// JSON format (ideal for ELK, Datadog, etc.)
-kafka.SetLogger(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+// JSON format with debug level
+slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
     Level: slog.LevelDebug,
 })))
 
-// Custom handler with your logging infrastructure
-kafka.SetLogger(slog.New(myCustomHandler))
-
 // Disable logging
-kafka.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
+slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
 ```
 
-### Lowercase log levels
+### Kafka message context in logs
 
-By default, `slog` outputs log levels in uppercase (`INFO`, `WARN`, `ERROR`).
-The default go-kafka logger already outputs lowercase levels, but if you provide a custom logger via `SetLogger()`, you need to opt-in explicitly.
-
-Use the exported `LowercaseLevelAttr` helper as `ReplaceAttr` in your handler options:
+When processing a message, the library stores Kafka metadata (topic, partition, offset, key, consumer_group) in the `context.Context` via `ContextWithMessageInfo`. To automatically include this metadata in all log records, wrap your handler with `kafka.NewContextHandler`:
 
 ```golang
-kafka.SetLogger(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-    Level:       slog.LevelInfo,
-    ReplaceAttr: kafka.LowercaseLevelAttr,
-})).With("component", "go-kafka"))
+// Your existing handler
+baseHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+    Level: slog.LevelInfo,
+})
+
+// Wrap it to automatically enrich logs with Kafka metadata from context
+slog.SetDefault(slog.New(kafka.NewContextHandler(baseHandler)))
 ```
 
-This produces `"level":"info"` instead of `"level":"INFO"`.
+The `ContextHandler` is a transparent decorator: when the context contains Kafka metadata, it adds them as attributes to the log record before delegating to the wrapped handler. When there is no metadata (e.g. logs outside of message processing), it passes through with no overhead beyond a single type assertion.
+
+You can also extract the metadata manually with `kafka.MessageAttrsFromContext(ctx)` if needed.
 
 ### Example Log Output
 
-**Text format (default):**
+**Without `ContextHandler`:**
 ```
 time=2024-01-15T10:30:00.000Z level=INFO msg="starting listener" consumer_group=my-group topics="[orders events]"
-time=2024-01-15T10:30:00.100Z level=WARN msg="message processing failed, will retry" topic=orders partition=0 offset=123 error="connection timeout" retry_number=1 remaining_retries=2 backoff_duration=2s
-time=2024-01-15T10:30:02.100Z level=ERROR msg="message processing failed, applying error handling policy" topic=orders partition=0 offset=123 error="processing failed: connection timeout"
+time=2024-01-15T10:30:00.100Z level=WARN msg="message processing failed, will retry" error="connection timeout" retry_number=1 remaining_retries=2 backoff_duration=2s
 ```
 
-**JSON format:**
+**With `ContextHandler` — Kafka metadata is added automatically:**
+```
+time=2024-01-15T10:30:00.100Z level=WARN msg="message processing failed, will retry" topic=orders consumer_group=my-group partition=0 offset=123 error="connection timeout" retry_number=1 remaining_retries=2 backoff_duration=2s
+```
+
+**JSON format with `ContextHandler`:**
 ```json
-{"time":"2024-01-15T10:30:00.000Z","level":"INFO","msg":"starting listener","consumer_group":"my-group","topics":["orders","events"]}
-{"time":"2024-01-15T10:30:00.100Z","level":"WARN","msg":"message processing failed, will retry","topic":"orders","partition":0,"offset":123,"error":"connection timeout","retry_number":1}
+{"time":"2024-01-15T10:30:00.100Z","level":"WARN","msg":"message processing failed, will retry","topic":"orders","consumer_group":"my-group","partition":0,"offset":123,"error":"connection timeout","retry_number":1}
 ```
 
 ## Default configuration

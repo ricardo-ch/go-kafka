@@ -3,6 +3,8 @@
 package mocks
 
 import (
+	"context"
+
 	sarama "github.com/IBM/sarama"
 	mock "github.com/stretchr/testify/mock"
 )
@@ -65,17 +67,17 @@ func (_c *MockProducer_Close_Call) RunAndReturn(run func() error) *MockProducer_
 	return _c
 }
 
-// Produce provides a mock function with given fields: msg
-func (_m *MockProducer) Produce(msg *sarama.ProducerMessage) error {
-	ret := _m.Called(msg)
+// Produce provides a mock function with given fields: ctx, msg
+func (_m *MockProducer) Produce(ctx context.Context, msg *sarama.ProducerMessage) error {
+	ret := _m.Called(ctx, msg)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Produce")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(*sarama.ProducerMessage) error); ok {
-		r0 = rf(msg)
+	if rf, ok := ret.Get(0).(func(context.Context, *sarama.ProducerMessage) error); ok {
+		r0 = rf(ctx, msg)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -89,14 +91,15 @@ type MockProducer_Produce_Call struct {
 }
 
 // Produce is a helper method to define mock.On call
+//   - ctx context.Context
 //   - msg *sarama.ProducerMessage
-func (_e *MockProducer_Expecter) Produce(msg interface{}) *MockProducer_Produce_Call {
-	return &MockProducer_Produce_Call{Call: _e.mock.On("Produce", msg)}
+func (_e *MockProducer_Expecter) Produce(ctx interface{}, msg interface{}) *MockProducer_Produce_Call {
+	return &MockProducer_Produce_Call{Call: _e.mock.On("Produce", ctx, msg)}
 }
 
-func (_c *MockProducer_Produce_Call) Run(run func(msg *sarama.ProducerMessage)) *MockProducer_Produce_Call {
+func (_c *MockProducer_Produce_Call) Run(run func(ctx context.Context, msg *sarama.ProducerMessage)) *MockProducer_Produce_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(*sarama.ProducerMessage))
+		run(args[0].(context.Context), args[1].(*sarama.ProducerMessage))
 	})
 	return _c
 }
@@ -106,7 +109,7 @@ func (_c *MockProducer_Produce_Call) Return(_a0 error) *MockProducer_Produce_Cal
 	return _c
 }
 
-func (_c *MockProducer_Produce_Call) RunAndReturn(run func(*sarama.ProducerMessage) error) *MockProducer_Produce_Call {
+func (_c *MockProducer_Produce_Call) RunAndReturn(run func(context.Context, *sarama.ProducerMessage) error) *MockProducer_Produce_Call {
 	_c.Call.Return(run)
 	return _c
 }

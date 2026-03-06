@@ -1,6 +1,7 @@
 package kafka
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -104,12 +105,12 @@ func NewDeadletterProducerMetricsService() *ProducerMetricsService {
 
 // Instrumentation is a middleware that provides metrics for the producer.
 func (p *ProducerMetricsService) Instrumentation(next producerHandler) producerHandler {
-	return func(producer *producer, msg *sarama.ProducerMessage) (err error) {
+	return func(ctx context.Context, producer *producer, msg *sarama.ProducerMessage) (err error) {
 		defer func(begin time.Time) {
 			p.recordSendLatency.WithLabelValues(msg.Topic).Observe(time.Since(begin).Seconds())
 		}(time.Now())
 
-		err = next(producer, msg)
+		err = next(ctx, producer, msg)
 
 		if err != nil {
 			p.errorCounter.WithLabelValues(msg.Topic).Inc()
@@ -122,12 +123,12 @@ func (p *ProducerMetricsService) Instrumentation(next producerHandler) producerH
 
 // DeadletterInstrumentation is a middleware that provides metrics for a deadletter producer.
 func (p *ProducerMetricsService) DeadletterInstrumentation(next producerHandler) producerHandler {
-	return func(producer *producer, msg *sarama.ProducerMessage) (err error) {
+	return func(ctx context.Context, producer *producer, msg *sarama.ProducerMessage) (err error) {
 		defer func(begin time.Time) {
 			p.recordSendLatency.WithLabelValues(msg.Topic).Observe(time.Since(begin).Seconds())
 		}(time.Now())
 
-		err = next(producer, msg)
+		err = next(ctx, producer, msg)
 
 		if err != nil {
 			p.errorCounter.WithLabelValues(msg.Topic).Inc()

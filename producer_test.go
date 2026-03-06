@@ -1,6 +1,7 @@
 package kafka
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -19,7 +20,7 @@ func Test_Producer_SyncProducer_Error(t *testing.T) {
 		handler:  produce,
 	}
 
-	err := p.Produce(&sarama.ProducerMessage{})
+	err := p.Produce(context.Background(), &sarama.ProducerMessage{})
 	assert.NotNil(t, err)
 	mockProducer.AssertExpectations(t)
 }
@@ -33,7 +34,7 @@ func Test_Producer_SyncProducer_OK(t *testing.T) {
 		handler:  produce,
 	}
 
-	err := p.Produce(&sarama.ProducerMessage{})
+	err := p.Produce(context.Background(), &sarama.ProducerMessage{})
 	assert.Nil(t, err)
 	mockProducer.AssertExpectations(t)
 }

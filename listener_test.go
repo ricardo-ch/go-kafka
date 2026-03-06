@@ -227,7 +227,7 @@ func Test_ConsumeClaim_Message_Error_WithErrorTopic(t *testing.T) {
 	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
 
 	producer := &mocks.MockProducer{}
-	producer.On("Produce", mock.Anything).Return(nil)
+	producer.On("Produce", mock.Anything, mock.Anything).Return(nil)
 
 	handlerCalled := false
 	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
@@ -271,7 +271,7 @@ func Test_ConsumeClaim_Message_Error_WithPanicTopic(t *testing.T) {
 	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
 
 	producer := &mocks.MockProducer{}
-	producer.On("Produce", mock.Anything).Return(nil)
+	producer.On("Produce", mock.Anything, mock.Anything).Return(nil)
 
 	handlerCalled := false
 	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
@@ -315,7 +315,7 @@ func Test_ConsumeClaim_Message_Error_WithHandlerSpecificRetryTopic(t *testing.T)
 	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
 
 	producer := &mocks.MockProducer{}
-	producer.On("Produce", mock.Anything).Return(nil)
+	producer.On("Produce", mock.Anything, mock.Anything).Return(nil)
 
 	handlerCalled := false
 	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
@@ -400,7 +400,7 @@ func Test_handleErrorMessage_OmittedError(t *testing.T) {
 	l := listener{deadletterProducer: producer}
 
 	omittedErr := fmt.Errorf("%w: %w", errors.New("should be omitted"), ErrEventOmitted)
-	l.handleErrorMessage(omittedErr, Handler{}, &sarama.ConsumerMessage{Topic: "test"})
+	l.handleErrorMessage(context.Background(), omittedErr, Handler{}, &sarama.ConsumerMessage{Topic: "test"})
 
 	producer.AssertNotCalled(t, "Produce", mock.Anything)
 }
@@ -523,7 +523,7 @@ func Test_handleErrorMessage_CustomOmittedError(t *testing.T) {
 	producer := &mocks.MockProducer{}
 	l := listener{deadletterProducer: producer}
 
-	l.handleErrorMessage(customOmittedError{message: "custom omitted error"}, Handler{}, &sarama.ConsumerMessage{Topic: "test"})
+	l.handleErrorMessage(context.Background(), customOmittedError{message: "custom omitted error"}, Handler{}, &sarama.ConsumerMessage{Topic: "test"})
 
 	producer.AssertNotCalled(t, "Produce", mock.Anything)
 }
@@ -596,7 +596,7 @@ func Test_handleErrorMessage_NewOmittedError(t *testing.T) {
 	producer := &mocks.MockProducer{}
 	l := listener{deadletterProducer: producer}
 
-	l.handleErrorMessage(NewOmittedError(errors.New("outdated event")), Handler{}, &sarama.ConsumerMessage{Topic: "test"})
+	l.handleErrorMessage(context.Background(), NewOmittedError(errors.New("outdated event")), Handler{}, &sarama.ConsumerMessage{Topic: "test"})
 
 	producer.AssertNotCalled(t, "Produce", mock.Anything)
 }
