@@ -8,4 +8,4 @@ run_example:
 	@while true; do make send_msg; sleep 5; done;
 
 send_msg:
-	docker exec -it kafka bash -c 'echo "{\"Content\":\"hello\"}" | kafka-console-producer --bootstrap-server localhost:9092 --topic test-users'
+	docker exec -i kafka bash -lc 'echo "{\"Content\":\"hello\"}" | /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic test-users'

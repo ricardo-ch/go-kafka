@@ -17,7 +17,7 @@ func makeUserHandler(s Service) kafka.Handler {
 				return err
 			}
 
-			return s.OnUserEvent(parsedMsg)
+			return s.OnUserEvent(ctx, parsedMsg)
 		},
 		Config: kafka.HandlerConfig{
 			ConsumerMaxRetries:  new(2),

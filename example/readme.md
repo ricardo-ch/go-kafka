@@ -1,5 +1,7 @@
 ## How to run this example
 
-run `make run_example`
+run `docker compose up -d`
 
-then run `go run .` in another terminal
+wait until Kafka is healthy, then run `go run .` in another terminal
+
+to send a test message, run `make send_msg`

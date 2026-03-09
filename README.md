@@ -251,7 +251,7 @@ Tracing uses W3C Trace Context format (`traceparent`, `tracestate` headers). Use
 
 ## Logging
 
-The library uses Go's standard `log/slog` package (Go 1.21+) for structured logging. There are no wrapper functions — the library calls `slog.Default()` directly.
+The library uses Go's standard `log/slog` package (Go 1.21+) for structured logging. There are no wrapper functions, and the package-level `slog` helpers are used throughout, so `slog.SetDefault()` controls the logger used by the library.
 
 ### Log Levels
 

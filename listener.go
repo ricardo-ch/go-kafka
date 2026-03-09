@@ -45,6 +45,7 @@ type listener struct {
 	groupID            string
 	instrumenting      *ConsumerMetricsService
 	tracer             TracingFunc
+	logContextStorer   LogContextStorer
 }
 
 // Listener is able to listen multiple topics with one handler by topic
@@ -53,6 +54,8 @@ type Listener interface {
 	Close()
 	GroupID() string
 }
+
+type LogContextStorer func(ctx context.Context, logger *slog.Logger) context.Context
 
 // NewListener creates a new instance of Listener
 func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (Listener, error) {
@@ -86,7 +89,7 @@ func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (
 	go func() {
 		for err := range consumerGroup.Errors() {
 			if err != nil {
-				slog.Default().Error("sarama consumer error", "error", err, "consumer_group", groupID)
+				slog.Error("sarama consumer error", "error", err, "consumer_group", groupID)
 			}
 		}
 	}()
@@ -185,7 +188,7 @@ func logHandlersConfig(groupID string, handlers Handlers) {
 			backoffDesc = fmt.Sprintf("%s -> %s (exponential)", handler.Config.DurationBeforeRetry, MaxBackoffDuration)
 		}
 
-		slog.Default().Info("topic handler configuration",
+		slog.Info("topic handler configuration",
 			"consumer_group", groupID,
 			"topic", topic,
 			"retry_mode", retryMode,
@@ -206,7 +209,7 @@ func (l *listener) Listen(consumerContext context.Context) error {
 		return errors.New("consumerGroup is nil, cannot listen")
 	}
 
-	slog.Default().Info("starting listener", "consumer_group", l.groupID, "topics", l.topics)
+	slog.Info("starting listener", "consumer_group", l.groupID, "topics", l.topics)
 
 	// When a session is over, make consumer join a new session, as long as the context is not cancelled
 	for {
@@ -214,15 +217,15 @@ func (l *listener) Listen(consumerContext context.Context) error {
 		// This block until the `session` is over. (basically until next rebalance)
 		err := l.consumerGroup.Consume(consumerContext, l.topics, l)
 		if err != nil {
-			slog.Default().Error("consumer group consume error", "error", err, "consumer_group", l.groupID)
+			slog.Error("consumer group consume error", "error", err, "consumer_group", l.groupID)
 			return err
 		}
 		if err := consumerContext.Err(); err != nil {
 			// Check if context is cancelled
-			slog.Default().Info("listener stopping (context cancelled)", "consumer_group", l.groupID)
+			slog.Info("listener stopping (context cancelled)", "consumer_group", l.groupID)
 			return err
 		}
-		slog.Default().Debug("consumer group session ended, rejoining", "consumer_group", l.groupID)
+		slog.Debug("consumer group session ended, rejoining", "consumer_group", l.groupID)
 	}
 }
 
@@ -231,9 +234,9 @@ func (l *listener) Close() {
 	if l.consumerGroup != nil {
 		err := l.consumerGroup.Close()
 		if err != nil {
-			slog.Default().Error("failed to close consumer group", "error", err, "consumer_group", l.groupID)
+			slog.Error("failed to close consumer group", "error", err, "consumer_group", l.groupID)
 		} else {
-			slog.Default().Info("consumer group closed", "consumer_group", l.groupID)
+			slog.Info("consumer group closed", "consumer_group", l.groupID)
 		}
 	}
 }
@@ -250,7 +253,7 @@ func (l *listener) Close() {
 
 // Setup is run at the beginning of a new session, before ConsumeClaim
 func (l *listener) Setup(session sarama.ConsumerGroupSession) error {
-	slog.Default().Info("consumer group session started",
+	slog.Info("consumer group session started",
 		"consumer_group", l.groupID,
 		"generation_id", session.GenerationID(),
 		"member_id", session.MemberID(),
@@ -261,7 +264,7 @@ func (l *listener) Setup(session sarama.ConsumerGroupSession) error {
 
 // Cleanup is run at the end of a session, once all ConsumeClaim goroutines have exited
 func (l *listener) Cleanup(session sarama.ConsumerGroupSession) error {
-	slog.Default().Info("consumer group session ended",
+	slog.Info("consumer group session ended",
 		"consumer_group", l.groupID,
 		"generation_id", session.GenerationID(),
 		"member_id", session.MemberID(),
@@ -271,7 +274,7 @@ func (l *listener) Cleanup(session sarama.ConsumerGroupSession) error {
 
 // ConsumeClaim must start a consumer loop of ConsumerGroupClaim's Messages().
 func (l *listener) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
-	slog.Default().Debug("starting to consume partition",
+	slog.Debug("starting to consume partition",
 		"consumer_group", l.groupID,
 		"topic", claim.Topic(),
 		"partition", claim.Partition(),
@@ -282,7 +285,7 @@ func (l *listener) ConsumeClaim(session sarama.ConsumerGroupSession, claim saram
 		l.onNewMessage(msg, session)
 	}
 
-	slog.Default().Debug("stopped consuming partition",
+	slog.Debug("stopped consuming partition",
 		"consumer_group", l.groupID,
 		"topic", claim.Topic(),
 		"partition", claim.Partition(),
@@ -291,8 +294,18 @@ func (l *listener) ConsumeClaim(session sarama.ConsumerGroupSession, claim saram
 }
 
 func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.ConsumerGroupSession) {
-	ctx := ContextWithMessageInfo(session.Context(), msg, l.groupID)
-	slog.Default().DebugContext(ctx, "received message")
+	ctx := session.Context()
+	if l.logContextStorer != nil {
+		info := kafkaMessageInfo{ConsumerGroup: l.groupID}
+		if msg != nil {
+			info.Topic = msg.Topic
+			info.Partition = msg.Partition
+			info.Offset = msg.Offset
+			info.Key = string(msg.Key)
+		}
+		kLogger := slog.With("kafka", info)
+		ctx = l.logContextStorer(ctx, kLogger)
+	}
 
 	var span trace.Span
 	if l.tracer != nil {
@@ -312,12 +325,12 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 		}
 		l.handleErrorMessage(ctx, err, handler, msg)
 	} else {
-		slog.Default().DebugContext(ctx, "message processed successfully")
+		slog.Debug("message processed successfully", "topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset)
 	}
 
 	if !errors.Is(err, context.Canceled) {
 		session.MarkMessage(msg, "")
-		slog.Default().DebugContext(ctx, "message offset committed")
+		slog.Debug("message offset committed", "offset", msg.Offset, "partition", msg.Partition, "topic", msg.Topic)
 	}
 }
 
@@ -327,7 +340,7 @@ func (l *listener) handleErrorMessage(ctx context.Context, initialError error, h
 		return
 	}
 
-	slog.Default().ErrorContext(ctx, "message processing failed, applying error handling policy", "error", initialError)
+	slog.ErrorContext(ctx, "message processing failed, applying error handling policy", "error", initialError)
 
 	if isRetriableError(initialError) && l.tryForwardToRetry(ctx, handler, msg) {
 		return
@@ -337,7 +350,7 @@ func (l *listener) handleErrorMessage(ctx context.Context, initialError error, h
 		return
 	}
 
-	slog.Default().WarnContext(ctx, "message dropped: no retry or deadletter topic configured")
+	slog.WarnContext(ctx, "message dropped: no retry or deadletter topic configured")
 	l.incOmittedCounter(msg)
 }
 
@@ -350,9 +363,9 @@ func (l *listener) tryForwardToRetry(ctx context.Context, handler Handler, msg *
 		return false
 	}
 
-	slog.Default().InfoContext(ctx, "forwarding message to retry topic", "retry_topic", topicName)
+	slog.InfoContext(ctx, "forwarding message to retry topic", "retry_topic", topicName)
 	if err := l.forwardToTopic(ctx, msg, topicName); err != nil {
-		slog.Default().ErrorContext(ctx, "failed to send message to retry topic", "error", err, "retry_topic", topicName)
+		slog.ErrorContext(ctx, "failed to send message to retry topic", "error", err, "retry_topic", topicName)
 	}
 	return true
 }
@@ -366,9 +379,9 @@ func (l *listener) tryForwardToDeadletter(ctx context.Context, handler Handler, 
 		return false
 	}
 
-	slog.Default().InfoContext(ctx, "forwarding message to deadletter topic", "deadletter_topic", topicName)
+	slog.InfoContext(ctx, "forwarding message to deadletter topic", "deadletter_topic", topicName)
 	if err := l.forwardToTopic(ctx, msg, topicName); err != nil {
-		slog.Default().ErrorContext(ctx, "failed to send message to deadletter topic", "error", err, "deadletter_topic", topicName)
+		slog.ErrorContext(ctx, "failed to send message to deadletter topic", "error", err, "deadletter_topic", topicName)
 	}
 	return true
 }
@@ -401,7 +414,7 @@ func (l *listener) forwardToTopic(ctx context.Context, msg *sarama.ConsumerMessa
 }
 
 func (l *listener) handleOmittedMessage(ctx context.Context, initialError error, msg *sarama.ConsumerMessage) {
-	slog.Default().WarnContext(ctx, "message omitted by handler", "error", initialError)
+	slog.WarnContext(ctx, "message omitted by handler", "error", initialError)
 	l.incOmittedCounter(msg)
 }
 
@@ -413,7 +426,7 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 		}
 
 		if retryNumber == 0 {
-			slog.Default().DebugContext(ctx, "processing message")
+			slog.DebugContext(ctx, "processing message")
 		}
 
 		err := l.safeProcess(ctx, handler, msg)
@@ -437,7 +450,7 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 			remainingRetries = fmt.Sprintf("%d", retries)
 		}
 
-		slog.Default().WarnContext(ctx, "message processing failed, will retry",
+		slog.WarnContext(ctx, "message processing failed, will retry",
 			"error", err,
 			"retry_number", retryNumber+1,
 			"remaining_retries", remainingRetries,
@@ -463,7 +476,7 @@ func (l *listener) safeProcess(ctx context.Context, handler Handler, msg *sarama
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic happened during handle of message: %v", r)
-			slog.Default().ErrorContext(ctx, "panic recovered during message processing", "panic", r, "stack", string(debug.Stack()))
+			slog.ErrorContext(ctx, "panic recovered during message processing", "panic", r, "stack", string(debug.Stack()))
 		}
 	}()
 	return handler.Processor(ctx, msg)
