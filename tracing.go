@@ -30,6 +30,9 @@ func extractCarrierFromMessage(ctx context.Context, msg *sarama.ConsumerMessage)
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if msg == nil {
+		return ctx
+	}
 	carrier := make(propagation.MapCarrier, len(msg.Headers))
 	for _, h := range msg.Headers {
 		carrier[string(h.Key)] = string(h.Value)

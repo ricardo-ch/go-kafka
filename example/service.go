@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-
-	"github.com/ricardo-ch/go-utils/v3/slogr"
 )
 
 type UserEvent struct {
@@ -21,6 +19,6 @@ func NewService() Service {
 type service struct{}
 
 func (s service) OnUserEvent(ctx context.Context, msg UserEvent) error {
-	slogr.From(ctx).Info("received user event")
+	From(ctx).Info("received user event")
 	return nil
 }

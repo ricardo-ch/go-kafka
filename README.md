@@ -251,7 +251,7 @@ Tracing uses W3C Trace Context format (`traceparent`, `tracestate` headers). Use
 
 ## Logging
 
-The library uses Go's standard `log/slog` package (Go 1.21+) for structured logging. There are no wrapper functions, and the package-level `slog` helpers are used throughout, so `slog.SetDefault()` controls the logger used by the library.
+The library uses Go's standard `log/slog` package (Go 1.21+) for structured logging. There are no wrapper functions — the library calls `slog.Default()` directly. Configure it via `slog.SetDefault()` in your application.
 
 ### Log Levels
 
@@ -261,8 +261,6 @@ The library uses Go's standard `log/slog` package (Go 1.21+) for structured logg
 - **ERROR**: Error messages (processing failures, panics, failed forwards)
 
 ### Configuration
-
-Configure logging via `slog.SetDefault()` in your application before creating listeners/producers:
 
 ```golang
 import "log/slog"
@@ -278,38 +276,66 @@ slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 ### Kafka message context in logs
 
-When processing a message, the library stores Kafka metadata (topic, partition, offset, key, consumer_group) in the `context.Context` via `ContextWithMessageInfo`. To automatically include this metadata in all log records, wrap your handler with `kafka.NewContextHandler`:
+When processing a message, the library can store a `*slog.Logger` enriched with Kafka metadata (topic, partition, offset, key, consumer_group) in the `context.Context`. This is opt-in via the `WithLogContextStorer` listener option.
+
+You provide a `LogContextStorer` function that defines how the logger is stored in the context:
 
 ```golang
-// Your existing handler
-baseHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-    Level: slog.LevelInfo,
-})
-
-// Wrap it to automatically enrich logs with Kafka metadata from context
-slog.SetDefault(slog.New(kafka.NewContextHandler(baseHandler)))
+type LogContextStorer func(ctx context.Context, logger *slog.Logger) context.Context
 ```
 
-The `ContextHandler` is a transparent decorator: when the context contains Kafka metadata, it adds them as attributes to the log record before delegating to the wrapped handler. When there is no metadata (e.g. logs outside of message processing), it passes through with no overhead beyond a single type assertion.
+The library creates a sub-logger with a `"kafka"` group containing the message metadata, and your function stores it in the context. Your handler can then retrieve it to log with full Kafka context.
 
-You can also extract the metadata manually with `kafka.MessageAttrsFromContext(ctx)` if needed.
+#### Example with slogr (recommended)
 
-### Example Log Output
+Using `slogr.ToContext` / `slogr.FromContext` from [go-utils](https://github.com/ricardo-ch/go-utils):
 
-**Without `ContextHandler`:**
-```
-time=2024-01-15T10:30:00.000Z level=INFO msg="starting listener" consumer_group=my-group topics="[orders events]"
-time=2024-01-15T10:30:00.100Z level=WARN msg="message processing failed, will retry" error="connection timeout" retry_number=1 remaining_retries=2 backoff_duration=2s
-```
+```golang
+import "github.com/ricardo-ch/go-utils/v3/slogr"
 
-**With `ContextHandler` — Kafka metadata is added automatically:**
-```
-time=2024-01-15T10:30:00.100Z level=WARN msg="message processing failed, will retry" topic=orders consumer_group=my-group partition=0 offset=123 error="connection timeout" retry_number=1 remaining_retries=2 backoff_duration=2s
+// Create the listener with context-stored logging
+listener, err := kafka.NewListener(appName, handlers,
+    kafka.WithLogContextStorer(slogr.ToContext),
+)
 ```
 
-**JSON format with `ContextHandler`:**
+In your handler, retrieve the enriched logger from context:
+
+```golang
+func myHandler(ctx context.Context, msg *sarama.ConsumerMessage) error {
+    logger := slogr.FromContext(ctx)
+    logger.Info("processing order", "order_id", orderID)
+    return nil
+}
+```
+
+Output includes Kafka metadata automatically as a structured group:
+
 ```json
-{"time":"2024-01-15T10:30:00.100Z","level":"WARN","msg":"message processing failed, will retry","topic":"orders","consumer_group":"my-group","partition":0,"offset":123,"error":"connection timeout","retry_number":1}
+{"level":"INFO","msg":"processing order","kafka":{"topic":"orders","consumer_group":"my-group","partition":0,"offset":123},"order_id":"abc-123"}
+```
+
+#### Custom context storer
+
+You can use any context-logger pattern:
+
+```golang
+type ctxKey struct{}
+
+func storeLogger(ctx context.Context, logger *slog.Logger) context.Context {
+    return context.WithValue(ctx, ctxKey{}, logger)
+}
+
+func loggerFromCtx(ctx context.Context) *slog.Logger {
+    if l, ok := ctx.Value(ctxKey{}).(*slog.Logger); ok {
+        return l
+    }
+    return slog.Default()
+}
+
+listener, _ := kafka.NewListener(appName, handlers,
+    kafka.WithLogContextStorer(storeLogger),
+)
 ```
 
 ## Default configuration

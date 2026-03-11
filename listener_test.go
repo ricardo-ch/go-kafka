@@ -421,7 +421,7 @@ func Test_handleMessageWithRetry(t *testing.T) {
 	}
 
 	l := listener{}
-	retErr := l.handleMessageWithRetry(context.Background(), handler, nil, 3, 0, false)
+	retErr := l.handleMessageWithRetry(context.Background(), handler, &sarama.ConsumerMessage{Topic: "test"}, 3, 0, false)
 
 	assert.Equal(t, 4, handlerCalled)
 	assert.ErrorIs(t, retErr, err)
@@ -443,7 +443,7 @@ func Test_handleMessageWithRetryWithBackoff(t *testing.T) {
 	}
 
 	l := listener{}
-	retErr := l.handleMessageWithRetry(context.Background(), handler, nil, 3, 0, true)
+	retErr := l.handleMessageWithRetry(context.Background(), handler, &sarama.ConsumerMessage{Topic: "test"}, 3, 0, true)
 
 	assert.Equal(t, 4, handlerCalled)
 	assert.ErrorIs(t, retErr, err)
@@ -462,7 +462,7 @@ func Test_handleMessageWithRetry_UnretriableError(t *testing.T) {
 	}
 
 	l := listener{}
-	l.handleMessageWithRetry(context.Background(), handler, nil, 3, 0, false)
+	l.handleMessageWithRetry(context.Background(), handler, &sarama.ConsumerMessage{Topic: "test"}, 3, 0, false)
 
 	assert.Equal(t, 1, handlerCalled)
 }
@@ -480,7 +480,7 @@ func Test_handleMessageWithRetry_UnretriableErrorWithBackoff(t *testing.T) {
 	}
 
 	l := listener{}
-	l.handleMessageWithRetry(context.Background(), handler, nil, 3, 0, true)
+	l.handleMessageWithRetry(context.Background(), handler, &sarama.ConsumerMessage{Topic: "test"}, 3, 0, true)
 
 	assert.Equal(t, 1, handlerCalled)
 }
@@ -513,7 +513,7 @@ func Test_handleMessageWithRetry_CustomUnretriableError(t *testing.T) {
 	}
 
 	l := listener{}
-	l.handleMessageWithRetry(context.Background(), handler, nil, 3, 0, false)
+	l.handleMessageWithRetry(context.Background(), handler, &sarama.ConsumerMessage{Topic: "test"}, 3, 0, false)
 
 	// Should only be called once because custom error implements UnretriableError
 	assert.Equal(t, 1, handlerCalled)
@@ -586,7 +586,7 @@ func Test_handleMessageWithRetry_NewUnretriableError(t *testing.T) {
 	}
 
 	l := listener{}
-	l.handleMessageWithRetry(context.Background(), handler, nil, 3, 0, false)
+	l.handleMessageWithRetry(context.Background(), handler, &sarama.ConsumerMessage{Topic: "test"}, 3, 0, false)
 
 	// Should only be called once because error is wrapped with NewUnretriableError
 	assert.Equal(t, 1, handlerCalled)
@@ -624,7 +624,7 @@ func Test_handleMessageWithRetry_InfiniteRetries(t *testing.T) {
 	}
 
 	l := listener{}
-	l.handleMessageWithRetry(context.Background(), handler, nil, InfiniteRetries, 0, false)
+	l.handleMessageWithRetry(context.Background(), handler, &sarama.ConsumerMessage{Topic: "test"}, InfiniteRetries, 0, false)
 
 	assert.Equal(t, 5, handlerCalled)
 
@@ -653,7 +653,7 @@ func Test_handleMessageWithRetry_InfiniteRetriesWithBackoff(t *testing.T) {
 	}
 
 	l := listener{}
-	l.handleMessageWithRetry(context.Background(), handler, nil, InfiniteRetries, 0, true)
+	l.handleMessageWithRetry(context.Background(), handler, &sarama.ConsumerMessage{Topic: "test"}, InfiniteRetries, 0, true)
 
 	assert.Equal(t, 5, handlerCalled)
 
@@ -684,7 +684,7 @@ func Test_handleMessageWithRetry_InfiniteRetriesWithContextCancel(t *testing.T) 
 	}
 
 	l := listener{}
-	l.handleMessageWithRetry(ctx, handler, nil, InfiniteRetries, 0, false)
+	l.handleMessageWithRetry(ctx, handler, &sarama.ConsumerMessage{Topic: "test"}, InfiniteRetries, 0, false)
 
 	assert.Equal(t, 5, handlerCalled)
 
@@ -717,7 +717,7 @@ func Test_handleMessageWithRetry_ContextCancelDuringBackoff(t *testing.T) {
 
 	start := time.Now()
 	l := listener{}
-	err := l.handleMessageWithRetry(ctx, handler, nil, InfiniteRetries, 0, false)
+	err := l.handleMessageWithRetry(ctx, handler, &sarama.ConsumerMessage{Topic: "test"}, InfiniteRetries, 0, false)
 	elapsed := time.Since(start)
 
 	assert.Equal(t, 1, handlerCalled)

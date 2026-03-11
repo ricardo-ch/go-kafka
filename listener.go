@@ -35,8 +35,8 @@ type Handler struct {
 // Handlers defines a handler for a given topic
 type Handlers map[string]Handler
 
-// listener object represents kafka consumer
-// Listener implement both `Listener` interface and `ConsumerGroupHandler` from sarama
+// listener object represents kafka consumer.
+// Listener implements both the Listener interface and ConsumerGroupHandler from sarama.
 type listener struct {
 	consumerGroup      sarama.ConsumerGroup
 	deadletterProducer Producer
@@ -46,6 +46,7 @@ type listener struct {
 	instrumenting      *ConsumerMetricsService
 	tracer             TracingFunc
 	logContextStorer   LogContextStorer
+	done               chan struct{}
 }
 
 // Listener is able to listen multiple topics with one handler by topic
@@ -86,10 +87,20 @@ func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (
 		return nil, err
 	}
 
+	done := make(chan struct{})
+
 	go func() {
-		for err := range consumerGroup.Errors() {
-			if err != nil {
-				slog.Error("sarama consumer error", "error", err, "consumer_group", groupID)
+		for {
+			select {
+			case err, ok := <-consumerGroup.Errors():
+				if !ok {
+					return
+				}
+				if err != nil {
+					slog.Error("sarama consumer error", "error", err, "consumer_group", groupID)
+				}
+			case <-done:
+				return
 			}
 		}
 	}()
@@ -112,6 +123,7 @@ func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (
 		handlers:           handlers,
 		consumerGroup:      consumerGroup,
 		topics:             topics,
+		done:               done,
 	}
 
 	// execute all method passed as option
@@ -229,14 +241,18 @@ func (l *listener) Listen(consumerContext context.Context) error {
 	}
 }
 
-// Close the listener and dependencies
+// Close shuts down the listener, its consumer group, and the internal error-draining goroutine.
+// Close must be called to avoid goroutine leaks.
 func (l *listener) Close() {
+	if l.done != nil {
+		close(l.done)
+	}
 	if l.consumerGroup != nil {
 		err := l.consumerGroup.Close()
 		if err != nil {
 			slog.Error("failed to close consumer group", "error", err, "consumer_group", l.groupID)
 		} else {
-			slog.Info("consumer group closed", "consumer_group", l.groupID)
+			slog.Debug("consumer group closed", "consumer_group", l.groupID)
 		}
 	}
 }
@@ -253,7 +269,7 @@ func (l *listener) Close() {
 
 // Setup is run at the beginning of a new session, before ConsumeClaim
 func (l *listener) Setup(session sarama.ConsumerGroupSession) error {
-	slog.Info("consumer group session started",
+	slog.Debug("consumer group session started",
 		"consumer_group", l.groupID,
 		"generation_id", session.GenerationID(),
 		"member_id", session.MemberID(),
@@ -264,7 +280,7 @@ func (l *listener) Setup(session sarama.ConsumerGroupSession) error {
 
 // Cleanup is run at the end of a session, once all ConsumeClaim goroutines have exited
 func (l *listener) Cleanup(session sarama.ConsumerGroupSession) error {
-	slog.Info("consumer group session ended",
+	slog.Debug("consumer group session ended",
 		"consumer_group", l.groupID,
 		"generation_id", session.GenerationID(),
 		"member_id", session.MemberID(),
@@ -295,15 +311,18 @@ func (l *listener) ConsumeClaim(session sarama.ConsumerGroupSession, claim saram
 
 func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.ConsumerGroupSession) {
 	ctx := session.Context()
+
+	info := kafkaMessageInfo{ConsumerGroup: l.groupID}
+	if msg != nil {
+		info.Topic = msg.Topic
+		info.Partition = msg.Partition
+		info.Offset = msg.Offset
+		info.Key = string(msg.Key)
+	}
+	kLogger := slog.With("kafka", info)
+	ctx = context.WithValue(ctx, loggerKey{}, kLogger)
+
 	if l.logContextStorer != nil {
-		info := kafkaMessageInfo{ConsumerGroup: l.groupID}
-		if msg != nil {
-			info.Topic = msg.Topic
-			info.Partition = msg.Partition
-			info.Offset = msg.Offset
-			info.Key = string(msg.Key)
-		}
-		kLogger := slog.With("kafka", info)
 		ctx = l.logContextStorer(ctx, kLogger)
 	}
 
@@ -325,12 +344,12 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 		}
 		l.handleErrorMessage(ctx, err, handler, msg)
 	} else {
-		slog.Debug("message processed successfully", "topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset)
+		loggerFromContext(ctx).Debug("message processed successfully")
 	}
 
 	if !errors.Is(err, context.Canceled) {
 		session.MarkMessage(msg, "")
-		slog.Debug("message offset committed", "offset", msg.Offset, "partition", msg.Partition, "topic", msg.Topic)
+		loggerFromContext(ctx).Debug("message offset committed")
 	}
 }
 
@@ -340,7 +359,7 @@ func (l *listener) handleErrorMessage(ctx context.Context, initialError error, h
 		return
 	}
 
-	slog.ErrorContext(ctx, "message processing failed, applying error handling policy", "error", initialError)
+	loggerFromContext(ctx).Error("message processing failed, applying error handling policy", "error", initialError)
 
 	if isRetriableError(initialError) && l.tryForwardToRetry(ctx, handler, msg) {
 		return
@@ -350,10 +369,13 @@ func (l *listener) handleErrorMessage(ctx context.Context, initialError error, h
 		return
 	}
 
-	slog.WarnContext(ctx, "message dropped: no retry or deadletter topic configured")
+	loggerFromContext(ctx).Warn("message dropped: no retry or deadletter topic configured")
 	l.incOmittedCounter(msg)
 }
 
+// tryForwardToRetry attempts to send the failed message to the retry topic.
+// This is fire-and-forget: if the forward fails, the error is logged but the message
+// is still considered handled. This avoids infinite retry loops on producer failures.
 func (l *listener) tryForwardToRetry(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage) bool {
 	topicName := handler.Config.RetryTopic
 	if topicName == "" && PushConsumerErrorsToRetryTopic {
@@ -363,13 +385,16 @@ func (l *listener) tryForwardToRetry(ctx context.Context, handler Handler, msg *
 		return false
 	}
 
-	slog.InfoContext(ctx, "forwarding message to retry topic", "retry_topic", topicName)
+	loggerFromContext(ctx).Info("forwarding message to retry topic", "retry_topic", topicName)
 	if err := l.forwardToTopic(ctx, msg, topicName); err != nil {
-		slog.ErrorContext(ctx, "failed to send message to retry topic", "error", err, "retry_topic", topicName)
+		loggerFromContext(ctx).Error("failed to send message to retry topic", "error", err, "retry_topic", topicName)
 	}
 	return true
 }
 
+// tryForwardToDeadletter attempts to send the failed message to the deadletter topic.
+// This is fire-and-forget: if the forward fails, the error is logged but the message
+// is still considered handled to prevent blocking the consumer.
 func (l *listener) tryForwardToDeadletter(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage) bool {
 	topicName := handler.Config.DeadletterTopic
 	if topicName == "" && PushConsumerErrorsToDeadletterTopic {
@@ -379,9 +404,9 @@ func (l *listener) tryForwardToDeadletter(ctx context.Context, handler Handler, 
 		return false
 	}
 
-	slog.InfoContext(ctx, "forwarding message to deadletter topic", "deadletter_topic", topicName)
+	loggerFromContext(ctx).Info("forwarding message to deadletter topic", "deadletter_topic", topicName)
 	if err := l.forwardToTopic(ctx, msg, topicName); err != nil {
-		slog.ErrorContext(ctx, "failed to send message to deadletter topic", "error", err, "deadletter_topic", topicName)
+		loggerFromContext(ctx).Error("failed to send message to deadletter topic", "error", err, "deadletter_topic", topicName)
 	}
 	return true
 }
@@ -398,12 +423,23 @@ func (l *listener) deduceTopicNameFromPattern(topic, pattern string) string {
 }
 
 func (l *listener) forwardToTopic(ctx context.Context, msg *sarama.ConsumerMessage, topicName string) error {
-	headers := make([]sarama.RecordHeader, 0, len(msg.Headers))
+	// Inject current trace context so the forwarded message
+	// is linked to the processing span that failed.
+	traceHeaders := GetKafkaHeadersFromContext(ctx)
+	traceKeys := make(map[string]struct{}, len(traceHeaders))
+	for _, h := range traceHeaders {
+		traceKeys[string(h.Key)] = struct{}{}
+	}
+
+	headers := make([]sarama.RecordHeader, 0, len(msg.Headers)+len(traceHeaders))
 	for _, h := range msg.Headers {
 		if h != nil {
-			headers = append(headers, *h)
+			if _, isTrace := traceKeys[string(h.Key)]; !isTrace {
+				headers = append(headers, *h)
+			}
 		}
 	}
+	headers = append(headers, traceHeaders...)
 
 	return l.deadletterProducer.Produce(ctx, &sarama.ProducerMessage{
 		Key:     sarama.ByteEncoder(msg.Key),
@@ -414,7 +450,7 @@ func (l *listener) forwardToTopic(ctx context.Context, msg *sarama.ConsumerMessa
 }
 
 func (l *listener) handleOmittedMessage(ctx context.Context, initialError error, msg *sarama.ConsumerMessage) {
-	slog.WarnContext(ctx, "message omitted by handler", "error", initialError)
+	loggerFromContext(ctx).Warn("message omitted by handler", "error", initialError)
 	l.incOmittedCounter(msg)
 }
 
@@ -426,7 +462,7 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 		}
 
 		if retryNumber == 0 {
-			slog.DebugContext(ctx, "processing message")
+			loggerFromContext(ctx).Debug("processing message")
 		}
 
 		err := l.safeProcess(ctx, handler, msg)
@@ -450,7 +486,7 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 			remainingRetries = fmt.Sprintf("%d", retries)
 		}
 
-		slog.WarnContext(ctx, "message processing failed, will retry",
+		loggerFromContext(ctx).Warn("message processing failed, will retry",
 			"error", err,
 			"retry_number", retryNumber+1,
 			"remaining_retries", remainingRetries,
@@ -458,9 +494,13 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 			"exponential_backoff", exponentialBackoff,
 		)
 
+		// Use time.NewTimer instead of time.After to avoid leaking the timer
+		// when the context is cancelled during the backoff wait.
+		backoffTimer := time.NewTimer(backoffDuration)
 		select {
-		case <-time.After(backoffDuration):
+		case <-backoffTimer.C:
 		case <-ctx.Done():
+			backoffTimer.Stop()
 			return ctx.Err()
 		}
 
@@ -476,7 +516,7 @@ func (l *listener) safeProcess(ctx context.Context, handler Handler, msg *sarama
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic happened during handle of message: %v", r)
-			slog.ErrorContext(ctx, "panic recovered during message processing", "panic", r, "stack", string(debug.Stack()))
+			loggerFromContext(ctx).Error("panic recovered during message processing", "panic", r, "stack", string(debug.Stack()))
 		}
 	}()
 	return handler.Processor(ctx, msg)

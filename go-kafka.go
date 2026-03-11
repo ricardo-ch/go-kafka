@@ -1,3 +1,9 @@
+// Package kafka provides opinionated Kafka consumer and producer abstractions
+// built on top of IBM/sarama, with retry, dead-lettering, Prometheus metrics,
+// and OpenTelemetry tracing.
+//
+// Global variables (Brokers, Config, ConsumerMaxRetries, etc.) must be configured
+// before creating any Listener or Producer. They are not safe for concurrent modification.
 package kafka
 
 import (

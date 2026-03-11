@@ -54,19 +54,18 @@ func (p *producer) Produce(ctx context.Context, msg *sarama.ProducerMessage) err
 func (p *producer) Close() error {
 	err := p.producer.Close()
 	if err != nil {
-		slog.Error("failed to close producer", "error", err)
-	} else {
-		slog.Info("producer closed")
+		slog.Warn("failed to close producer", "error", err)
 	}
 	return err
 }
 
-func produce(ctx context.Context, p *producer, msg *sarama.ProducerMessage) error {
+// produce sends the message via sarama. ctx is part of the producerHandler signature
+// so that middleware (instrumenting, tracing) can access it; it is not used here directly.
+func produce(_ context.Context, p *producer, msg *sarama.ProducerMessage) error {
 	partition, offset, err := p.producer.SendMessage(msg)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to produce message", "error", err, "topic", msg.Topic)
 		return err
 	}
-	slog.DebugContext(ctx, "message produced", "topic", msg.Topic, "partition", partition, "offset", offset)
+	slog.Debug("message produced", "topic", msg.Topic, "partition", partition, "offset", offset)
 	return nil
 }
