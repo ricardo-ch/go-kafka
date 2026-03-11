@@ -534,12 +534,16 @@ func shouldRetry(retries int, err error) bool {
 	return true
 }
 
-// getBackoffDuration returns the backoff duration using the handler's BackoffFunc
-// or the global ExponentialBackoffFunc (which uses sarama.NewExponentialBackoff with KIP-580 jitter).
+// getBackoffDuration returns the backoff duration using (in priority order):
+// 1. The handler's custom BackoffFunc
+// 2. The global ExponentialBackoffFunc (if set by the client)
+// 3. A lazily-created sarama.NewExponentialBackoff using the current DurationBeforeRetry/MaxBackoffDuration
 func getBackoffDuration(handler Handler, retryNumber, maxRetries int) time.Duration {
 	if handler.Config.BackoffFunc != nil {
 		return handler.Config.BackoffFunc(retryNumber, maxRetries)
 	}
-	// Use the global ExponentialBackoffFunc which leverages sarama.NewExponentialBackoff
-	return ExponentialBackoffFunc(retryNumber, maxRetries)
+	if ExponentialBackoffFunc != nil {
+		return ExponentialBackoffFunc(retryNumber, maxRetries)
+	}
+	return sarama.NewExponentialBackoff(DurationBeforeRetry, MaxBackoffDuration)(retryNumber, maxRetries)
 }

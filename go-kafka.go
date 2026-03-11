@@ -33,9 +33,11 @@ var DurationBeforeRetry = 2 * time.Second
 var MaxBackoffDuration = 1 * time.Minute
 
 // ExponentialBackoffFunc is the function used to calculate exponential backoff duration.
-// It uses sarama.NewExponentialBackoff which implements KIP-580 with jitter.
-// The function signature is: func(retries, maxRetries int) time.Duration
-var ExponentialBackoffFunc = sarama.NewExponentialBackoff(DurationBeforeRetry, MaxBackoffDuration)
+// If nil (default), it is evaluated lazily using the current values of DurationBeforeRetry
+// and MaxBackoffDuration at the time of the first retry, via sarama.NewExponentialBackoff
+// (KIP-580 with jitter).
+// Set this to a custom function to override the default backoff strategy.
+var ExponentialBackoffFunc func(retries, maxRetries int) time.Duration
 
 // PushConsumerErrorsToRetryTopic is a boolean to define if messages in error have to be pushed to a retry topic.
 var PushConsumerErrorsToRetryTopic = true
