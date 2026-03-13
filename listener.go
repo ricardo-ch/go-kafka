@@ -6,23 +6,20 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/IBM/sarama"
-	"go.opentelemetry.io/otel/trace"
 )
 
 type HandlerConfig struct {
 	ConsumerMaxRetries  *int
 	DurationBeforeRetry *time.Duration
 	ExponentialBackoff  bool
-	// BackoffFunc is the function used to calculate backoff duration when ExponentialBackoff is true.
-	// If nil, the global ExponentialBackoffFunc (using sarama.NewExponentialBackoff) will be used.
-	// The function signature is: func(retries, maxRetries int) time.Duration
-	BackoffFunc     func(retries, maxRetries int) time.Duration
-	RetryTopic      string
-	DeadletterTopic string
+	BackoffFunc         BackoffFunc
+	RetryTopic          string
+	DeadletterTopic     string
 }
 
 // Handler Processor that handle received kafka messages
@@ -31,6 +28,11 @@ type Handler struct {
 	Processor func(ctx context.Context, msg *sarama.ConsumerMessage) error
 	Config    HandlerConfig
 }
+
+// BackoffFunc is the function used to calculate backoff duration when ExponentialBackoff is true.
+// If nil, the global ExponentialBackoffFunc (using sarama.NewExponentialBackoff) will be used.
+// The function signature is: func(retries, maxRetries int) time.Duration
+type BackoffFunc func(retries, maxRetries int) time.Duration
 
 // Handlers defines a handler for a given topic
 type Handlers map[string]Handler
@@ -142,10 +144,10 @@ func (l *listener) GroupID() string {
 func checkErrorTopicToAvoidInfiniteLoop(handlers Handlers) error {
 	for topic, handler := range handlers {
 		if handler.Config.RetryTopic == topic {
-			return fmt.Errorf("retry topic cannot be the same as the original topic: %s", topic)
+			return fmt.Errorf("%w: %s", ErrRetryTopicCollision, topic)
 		}
 		if handler.Config.DeadletterTopic == topic {
-			return fmt.Errorf("deadletter topic cannot be the same as the original topic: %s", topic)
+			return fmt.Errorf("%w: %s", ErrDeadletterTopicCollision, topic)
 		}
 	}
 	return nil
@@ -165,6 +167,10 @@ func fillHandlerConfigWithDefault(handlers Handlers) {
 	}
 }
 
+func groupIDAndTopicReplacer(groupID, topic string) *strings.Replacer {
+	return strings.NewReplacer("$$CG$$", groupID, "$$T$$", topic)
+}
+
 // logHandlersConfig logs the retry configuration for each topic handler.
 func logHandlersConfig(groupID string, handlers Handlers) {
 	for topic, handler := range handlers {
@@ -174,7 +180,7 @@ func logHandlersConfig(groupID string, handlers Handlers) {
 			retryMode = "infinite"
 		}
 
-		r := strings.NewReplacer("$$CG$$", groupID, "$$T$$", topic)
+		r := groupIDAndTopicReplacer(groupID, topic)
 
 		retryTopic := handler.Config.RetryTopic
 		if retryTopic == "" {
@@ -232,7 +238,8 @@ func (l *listener) Listen(consumerContext context.Context) error {
 			slog.Error("consumer group consume error", "error", err, "consumer_group", l.groupID)
 			return err
 		}
-		if err := consumerContext.Err(); err != nil {
+		err = consumerContext.Err()
+		if err != nil {
 			// Check if context is cancelled
 			slog.Info("listener stopping (context cancelled)", "consumer_group", l.groupID)
 			return err
@@ -310,8 +317,30 @@ func (l *listener) ConsumeClaim(session sarama.ConsumerGroupSession, claim saram
 }
 
 func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.ConsumerGroupSession) {
-	ctx := session.Context()
+	ctx := l.enrichContext(session.Context(), msg)
 
+	ctx, endSpan := l.startMessageSpan(ctx, msg)
+	defer endSpan()
+
+	err := l.processMessage(ctx, msg)
+
+	if !errors.Is(err, context.Canceled) {
+		if err != nil {
+			// Log the error with the error type and stack trace if it is retriable
+			attrs := []any{"error", err, "error_type", errorType(err)}
+			if isRetriableError(err) {
+				attrs = append(attrs, "stack", string(debug.Stack()))
+			}
+			loggerFromContext(ctx).Error("message processing failed", attrs...)
+		}
+		session.MarkMessage(msg, "")
+		loggerFromContext(ctx).Debug("message offset committed")
+	}
+}
+
+// enrichContext builds a context carrying the enriched logger with Kafka message metadata.
+// If a LogContextStorer is configured, it is also called so the user's handler can retrieve the logger.
+func (l *listener) enrichContext(ctx context.Context, msg *sarama.ConsumerMessage) context.Context {
 	info := kafkaMessageInfo{ConsumerGroup: l.groupID}
 	if msg != nil {
 		info.Topic = msg.Topic
@@ -325,43 +354,46 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 	if l.logContextStorer != nil {
 		ctx = l.logContextStorer(ctx, kLogger)
 	}
+	return ctx
+}
 
-	var span trace.Span
-	if l.tracer != nil {
-		span, ctx = l.tracer(ctx, msg)
-		if span != nil {
-			defer span.End()
-		}
-	}
-
+// processMessage handles the full lifecycle of a single message: retry loop, error
+// classification, metrics, and forwarding to retry/deadletter topics.
+func (l *listener) processMessage(ctx context.Context, msg *sarama.ConsumerMessage) error {
 	handler := l.handlers[msg.Topic]
 
-	err := l.handleMessageWithRetry(ctx, handler, msg, *handler.Config.ConsumerMaxRetries, 0, handler.Config.ExponentialBackoff)
+	err := l.handleMessageWithRetry(ctx, handler, msg, *handler.Config.ConsumerMaxRetries, handler.Config.ExponentialBackoff)
 	if err != nil {
 		err = fmt.Errorf("processing failed: %w", err)
-		if l.instrumenting != nil && l.instrumenting.recordErrorCounter != nil && !isOmittedError(err) {
-			l.instrumenting.recordErrorCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
-		}
 		l.handleErrorMessage(ctx, err, handler, msg)
-	} else {
-		loggerFromContext(ctx).Debug("message processed successfully")
+		return err
 	}
 
-	if !errors.Is(err, context.Canceled) {
-		session.MarkMessage(msg, "")
-		loggerFromContext(ctx).Debug("message offset committed")
-	}
+	loggerFromContext(ctx).Debug("message processed successfully")
+	return nil
 }
 
 func (l *listener) handleErrorMessage(ctx context.Context, initialError error, handler Handler, msg *sarama.ConsumerMessage) {
+	l.recordErrorCounter(msg, initialError)
+
 	if isOmittedError(initialError) {
 		l.handleOmittedMessage(ctx, initialError, msg)
 		return
 	}
 
+	if !isRetriableError(initialError) {
+		loggerFromContext(ctx).Warn("message not retriable, forwarding to deadletter", "error", initialError, "error_type", "unretriable")
+		if l.tryForwardToDeadletter(ctx, handler, msg) {
+			return
+		}
+		loggerFromContext(ctx).Warn("message dropped: no deadletter topic configured", "error_type", "unretriable")
+		l.incOmittedCounter(msg)
+		return
+	}
+
 	loggerFromContext(ctx).Error("message processing failed, applying error handling policy", "error", initialError)
 
-	if isRetriableError(initialError) && l.tryForwardToRetry(ctx, handler, msg) {
+	if l.tryForwardToRetry(ctx, handler, msg) {
 		return
 	}
 
@@ -377,8 +409,13 @@ func (l *listener) handleErrorMessage(ctx context.Context, initialError error, h
 // This is fire-and-forget: if the forward fails, the error is logged but the message
 // is still considered handled. This avoids infinite retry loops on producer failures.
 func (l *listener) tryForwardToRetry(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage) bool {
+
+	if !PushConsumerErrorsToRetryTopic {
+		return false
+	}
+
 	topicName := handler.Config.RetryTopic
-	if topicName == "" && PushConsumerErrorsToRetryTopic {
+	if topicName == "" {
 		topicName = l.deduceTopicNameFromPattern(msg.Topic, RetryTopicPattern)
 	}
 	if topicName == "" {
@@ -417,8 +454,14 @@ func (l *listener) incOmittedCounter(msg *sarama.ConsumerMessage) {
 	}
 }
 
+func (l *listener) recordErrorCounter(msg *sarama.ConsumerMessage, err error) {
+	if l.instrumenting != nil && l.instrumenting.recordErrorCounter != nil && !isOmittedError(err) {
+		l.instrumenting.recordErrorCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
+	}
+}
+
 func (l *listener) deduceTopicNameFromPattern(topic, pattern string) string {
-	r := strings.NewReplacer("$$CG$$", l.groupID, "$$T$$", topic)
+	r := groupIDAndTopicReplacer(l.groupID, topic)
 	return r.Replace(pattern)
 }
 
@@ -450,20 +493,19 @@ func (l *listener) forwardToTopic(ctx context.Context, msg *sarama.ConsumerMessa
 }
 
 func (l *listener) handleOmittedMessage(ctx context.Context, initialError error, msg *sarama.ConsumerMessage) {
-	loggerFromContext(ctx).Warn("message omitted by handler", "error", initialError)
+	loggerFromContext(ctx).Warn("message omitted by handler", "error", initialError, "error_type", "omitted")
 	l.incOmittedCounter(msg)
 }
 
 // handleMessageWithRetry calls the handler function and retries on failure using a loop.
-func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage, retries, retryNumber int, exponentialBackoff bool) error {
+func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage, retries int, exponentialBackoff bool) error {
+	retryNumber := 0
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 
-		if retryNumber == 0 {
-			loggerFromContext(ctx).Debug("processing message")
-		}
+		loggerFromContext(ctx).Debug("processing message")
 
 		err := l.safeProcess(ctx, handler, msg)
 		if err == nil {
@@ -474,40 +516,33 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 			return err
 		}
 
-		var backoffDuration time.Duration
-		if exponentialBackoff {
-			backoffDuration = getBackoffDuration(handler, retryNumber, *handler.Config.ConsumerMaxRetries)
-		} else {
-			backoffDuration = *handler.Config.DurationBeforeRetry
-		}
+		retryWaitDuration := retryDuration(handler, retryNumber, exponentialBackoff)
 
 		remainingRetries := "infinite"
 		if retries != InfiniteRetries {
-			remainingRetries = fmt.Sprintf("%d", retries)
+			retries--
+			remainingRetries = strconv.Itoa(retries)
 		}
+
+		retryNumber++
 
 		loggerFromContext(ctx).Warn("message processing failed, will retry",
 			"error", err,
-			"retry_number", retryNumber+1,
+			"retry_number", retryNumber,
 			"remaining_retries", remainingRetries,
-			"backoff_duration", backoffDuration.Round(10*time.Millisecond).String(),
+			"retry_wait_duration", retryWaitDuration.Round(10*time.Millisecond).String(),
 			"exponential_backoff", exponentialBackoff,
 		)
 
 		// Use time.NewTimer instead of time.After to avoid leaking the timer
 		// when the context is cancelled during the backoff wait.
-		backoffTimer := time.NewTimer(backoffDuration)
+		retryWaitTimer := time.NewTimer(retryWaitDuration)
 		select {
-		case <-backoffTimer.C:
+		case <-retryWaitTimer.C:
 		case <-ctx.Done():
-			backoffTimer.Stop()
+			retryWaitTimer.Stop()
 			return ctx.Err()
 		}
-
-		if retries != InfiniteRetries {
-			retries--
-		}
-		retryNumber++
 	}
 }
 
@@ -534,7 +569,17 @@ func shouldRetry(retries int, err error) bool {
 	return true
 }
 
-// getBackoffDuration returns the backoff duration using (in priority order):
+// retryDuration returns the wait duration before the next retry attempt.
+// When exponentialBackoff is true, it delegates to getBackoffDuration; otherwise
+// it uses the handler's fixed DurationBeforeRetry.
+func retryDuration(handler Handler, retryNumber int, exponentialBackoff bool) time.Duration {
+	if exponentialBackoff {
+		return getBackoffDuration(handler, retryNumber, *handler.Config.ConsumerMaxRetries)
+	}
+	return *handler.Config.DurationBeforeRetry
+}
+
+// getBackoffDuration returns the exponential backoff duration using (in priority order):
 // 1. The handler's custom BackoffFunc
 // 2. The global ExponentialBackoffFunc (if set by the client)
 // 3. A lazily-created sarama.NewExponentialBackoff using the current DurationBeforeRetry/MaxBackoffDuration

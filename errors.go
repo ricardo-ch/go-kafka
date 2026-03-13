@@ -2,6 +2,14 @@ package kafka
 
 import "errors"
 
+var (
+	// ErrRetryTopicCollision is returned when a handler's retry topic is the same as the consumed topic.
+	ErrRetryTopicCollision = errors.New("retry topic cannot be the same as the original topic")
+
+	// ErrDeadletterTopicCollision is returned when a handler's deadletter topic is the same as the consumed topic.
+	ErrDeadletterTopicCollision = errors.New("deadletter topic cannot be the same as the original topic")
+)
+
 // UnretriableError is an interface for errors that should not be retried.
 // Implement IsUnretriable() bool on your custom errors to mark them as non-retriable.
 type UnretriableError interface {
@@ -87,4 +95,16 @@ func isOmittedError(err error) bool {
 // isRetriableError checks if the error is retriable (not unretriable and not omitted).
 func isRetriableError(err error) bool {
 	return !isUnretriableError(err) && !isOmittedError(err)
+}
+
+// errorType returns a human-readable classification of the error for logging.
+func errorType(err error) string {
+	switch {
+	case isOmittedError(err):
+		return "omitted"
+	case isUnretriableError(err):
+		return "unretriable"
+	default:
+		return "retriable"
+	}
 }
