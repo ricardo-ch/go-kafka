@@ -28,9 +28,14 @@ const InfiniteRetries = -1
 // By default 2 seconds.
 var DurationBeforeRetry = 2 * time.Second
 
-// MaxBackoffDuration is the maximum backoff duration for exponential backoff.
-// By default 1 minute.
-var MaxBackoffDuration = 1 * time.Minute
+// MaxBackoffDuration is the maximum backoff duration for message processing retries.
+// By default 10 minute.
+var MaxBackoffDuration = 10 * time.Minute
+
+// ForwardMaxBackoffDuration is the maximum backoff duration when retrying to forward
+// a message to a retry or deadletter topic after a producer failure.
+// By default 30 seconds.
+var ForwardMaxBackoffDuration = 30 * time.Second
 
 // ExponentialBackoffFunc is the function used to calculate exponential backoff duration.
 // If nil (default), it is evaluated lazily using the current values of DurationBeforeRetry

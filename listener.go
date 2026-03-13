@@ -449,7 +449,6 @@ func (l *listener) forwardWithRetry(ctx context.Context, msg *sarama.ConsumerMes
 	log.Info("forwarding message to "+kind+" topic", kind+"_topic", topicName)
 
 	backoff := DurationBeforeRetry
-	const maxBackoff = 30 * time.Second
 	attempt := 0
 
 	for {
@@ -475,7 +474,7 @@ func (l *listener) forwardWithRetry(ctx context.Context, msg *sarama.ConsumerMes
 			return
 		}
 
-		backoff = min(backoff*2, maxBackoff)
+		backoff = min(backoff*2, ForwardMaxBackoffDuration)
 	}
 }
 
@@ -600,14 +599,19 @@ func shouldRetry(retries int, err error) bool {
 	return true
 }
 
-// retryDuration returns the wait duration before the next retry attempt.
-// When exponentialBackoff is true, it delegates to getBackoffDuration; otherwise
-// it uses the handler's fixed DurationBeforeRetry.
+// retryDuration returns the wait duration before the next retry attempt, capped
+// by MaxBackoffDuration. When exponentialBackoff is true, it delegates to
+// getBackoffDuration (which already respects the cap internally); otherwise it
+// uses the handler's fixed DurationBeforeRetry with the same cap applied.
 func retryDuration(handler Handler, retryNumber int, exponentialBackoff bool) time.Duration {
 	if exponentialBackoff {
 		return getBackoffDuration(handler, retryNumber, *handler.Config.ConsumerMaxRetries)
 	}
-	return *handler.Config.DurationBeforeRetry
+	d := *handler.Config.DurationBeforeRetry
+	if d > MaxBackoffDuration {
+		return MaxBackoffDuration
+	}
+	return d
 }
 
 // getBackoffDuration returns the exponential backoff duration using (in priority order):
