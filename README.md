@@ -6,14 +6,14 @@
 Go-kafka provides an easy way to use kafka listeners and producers with only a few lines of code.
 The listener is able to consume from multiple topics, and will execute a separate handler for each topic.
 
-> **v4 breaking changes**:
+> **v4 breaking changes** — see [Migration Guide (v3 → v4)](MIGRATION.md) for full details and checklist:
+> - **Tracing**: OpenTracing replaced by OpenTelemetry (OTel). W3C Trace Context (`traceparent`, `tracestate`) instead of Jaeger. Remove `github.com/ricardo-ch/go-tracing`
 > - `Producer.Produce` now requires a `context.Context` as first argument: `Produce(ctx, msg)`
 > - `SetLogger`, `SetLogLevel`, `LowercaseLevelAttr` removed — use `slog.SetDefault()` instead
 > - `ExponentialBackoffFunc` is now `nil` by default (evaluated lazily using current `DurationBeforeRetry`/`MaxBackoffDuration`)
-> - New `ForwardMaxBackoffDuration` global variable for retry/deadletter forward backoff cap
-> - Retry/deadletter forwarding now retries on producer failure instead of fire-and-forget
+> - `MaxBackoffDuration` default changed from 1m to 10m
+> - New `ForwardMaxBackoffDuration` global variable (default: 30s) — retry/deadletter forwarding now retries on producer failure
 > - New `WithLogContextStorer` option for context-aware structured logging
-> - OpenTracing replaced by OpenTelemetry (OTel). Propagation format is now W3C Trace Context (`traceparent`, `tracestate`) instead of Jaeger/OpenTracing. Remove `github.com/ricardo-ch/go-tracing`; configure OTel in your application instead.
 
 ## Quick start
 
