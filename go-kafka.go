@@ -42,7 +42,7 @@ var ForwardMaxBackoffDuration = 30 * time.Second
 // and MaxBackoffDuration at the time of the first retry, via sarama.NewExponentialBackoff
 // (KIP-580 with jitter).
 // Set this to a custom function to override the default backoff strategy.
-var ExponentialBackoffFunc func(retries, maxRetries int) time.Duration
+var ExponentialBackoffFunc BackoffFunc
 
 // PushConsumerErrorsToRetryTopic is a boolean to define if messages in error have to be pushed to a retry topic.
 var PushConsumerErrorsToRetryTopic = true
