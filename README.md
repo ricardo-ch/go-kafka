@@ -272,7 +272,7 @@ The library uses Go's standard `log/slog` package for structured logging. It cal
 - **DEBUG**: Message received, processed, committed, session lifecycle
 - **INFO**: Listener started, handler config, messages forwarded to retry/deadletter
 - **WARN**: Retries, omitted messages, dropped messages, unretriable errors
-- **ERROR**: Processing failures (with stack trace for retriable errors), panics
+- **ERROR**: Processing failures, panics (with stack trace)
 
 ### Kafka message context in logs (`WithLogContextStorer`)
 

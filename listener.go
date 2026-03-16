@@ -338,12 +338,7 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 
 	if !errors.Is(err, context.Canceled) {
 		if err != nil {
-			// Log the error with the error type and stack trace if it is retriable
-			attrs := []any{"error", err, "error_type", errorType(err)}
-			if isRetriableError(err) {
-				attrs = append(attrs, "stack", string(debug.Stack()))
-			}
-			loggerFromContext(ctx).Error("message processing failed", attrs...)
+			loggerFromContext(ctx).Error("message processing failed", "error", err, "error_type", errorType(err))
 		}
 		session.MarkMessage(msg, "")
 		loggerFromContext(ctx).Debug("message offset committed")
