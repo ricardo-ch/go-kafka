@@ -23,10 +23,6 @@ func getClient() (sarama.Client, error) {
 		client, clientErr = sarama.NewClient(Brokers, Config)
 	})
 
-	if len(Brokers) == 0 {
-		return nil, errors.New("cannot create new client, Brokers must be specified")
-	}
-
 	return client, clientErr
 }
 
