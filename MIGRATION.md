@@ -249,6 +249,22 @@ To tune the forward retry cap:
 kafka.ForwardMaxBackoffDuration = 1 * time.Minute
 ```
 
+## Resource Cleanup (`Close`)
+
+`Close()` has been improved in v4:
+- **Idempotent**: safe for multiple calls (protected by `sync.Once`), no more panic on double close
+- **Full cleanup**: now properly closes the internal deadletter producer in addition to the consumer group and error-draining goroutine
+
+In v3, calling `Close()` twice would panic, and the internal deadletter producer was never closed (resource leak). No code change is required — just be aware that `Close()` now releases all resources.
+
+## Topic Collision Detection
+
+`NewListener` now validates that a handler's retry or deadletter topic does not match its consumed topic, preventing infinite loops. Two new sentinel errors are returned:
+- `ErrRetryTopicCollision` — retry topic matches the consumed topic
+- `ErrDeadletterTopicCollision` — deadletter topic matches the consumed topic
+
+This is a safety check at creation time — no code change required unless you have such a configuration (which was a bug in v3).
+
 ## Removed Utilities
 
 | Removed | Replacement |
@@ -270,4 +286,6 @@ kafka.ForwardMaxBackoffDuration = 1 * time.Minute
 - [ ] Replace `fmt.Errorf("...: %w", kafka.ErrEventOmitted)` with `kafka.NewOmittedError(err)`
 - [ ] Review `MaxBackoffDuration` — default changed from 1m to 10m
 - [ ] Review `ExponentialBackoffFunc` — now lazy, remove explicit initialization if using defaults
+- [ ] Verify no retry/deadletter topic collides with a consumed topic (`ErrRetryTopicCollision` / `ErrDeadletterTopicCollision`)
+- [ ] Remove workarounds for double `Close()` calls — now idempotent
 - [ ] Run tests to verify compatibility

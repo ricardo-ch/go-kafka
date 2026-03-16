@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	TimestampTypeLogAppendTime = "LogAppendTime"
-	TimestampTypeCreateTime    = "CreateTime"
+	timestampTypeLogAppendTime = "LogAppendTime"
+	timestampTypeCreateTime    = "CreateTime"
 )
 
 var (
@@ -140,9 +140,9 @@ func (c *ConsumerMetricsService) Instrumentation(next Handler) Handler {
 			// Since sarama anyways sets msg.BlockTimestamp to the block timestamp,
 			// we can compare it with msg.Timestamp to know if the message was produced with the
 			// LogAppendTime timestamp type or not.
-			timestampType := TimestampTypeLogAppendTime
+			timestampType := timestampTypeLogAppendTime
 			if msg.Timestamp != msg.BlockTimestamp {
-				timestampType = TimestampTypeCreateTime
+				timestampType = timestampTypeCreateTime
 			}
 			c.currentMessageTimestamp.WithLabelValues(msg.Topic, c.groupID, strconv.FormatInt(int64(msg.Partition), 10), timestampType).Set(float64(msg.Timestamp.Unix()))
 

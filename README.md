@@ -49,6 +49,7 @@ _ = producer.Produce(ctx, message)
 - Blocking retry with configurable count, backoff, and exponential backoff (KIP-580 with jitter)
 - Automatic forwarding to retry/deadletter topics with guaranteed delivery (retry on producer failure)
 - Error classification: retriable, unretriable, omitted
+- Topic collision detection (`ErrRetryTopicCollision`, `ErrDeadletterTopicCollision`)
 - Prometheus metrics for consumer and producer
 - OpenTelemetry tracing (W3C Trace Context)
 - Context-aware structured logging via `slog`
@@ -153,6 +154,12 @@ kafka.ErrEventOmitted
 return fmt.Errorf("bad payload: %w", kafka.ErrEventUnretriable)
 ```
 
+#### Topic collision detection
+
+`NewListener` returns an error if a handler's retry or deadletter topic collides with its consumed topic, preventing infinite loops:
+- `ErrRetryTopicCollision` — retry topic matches the consumed topic
+- `ErrDeadletterTopicCollision` — deadletter topic matches the consumed topic
+
 ### Blocking Retries
 
 By default, failed events are retried 3 times with a 2-second delay and no exponential backoff. The backoff is capped by `MaxBackoffDuration` (default: 10 minutes).
@@ -224,6 +231,7 @@ Metrics for the listener and the producer can be exported to Prometheus.
 | `kafka_consumer_record_error_total` | `kafka_topic`, `consumer_group` | Number of errors (after all retries exhausted) |
 | `kafka_consumergroup_current_message_timestamp` | `kafka_topic`, `consumer_group`, `partition`, `type` | Timestamp of the current message (`LogAppendTime` or `CreateTime`) |
 | `kafka_producer_record_send_total` | `kafka_topic` | Number of messages sent |
+| `kafka_producer_record_send_latency_seconds` | `kafka_topic` | Latency of sending a message |
 | `kafka_producer_dead_letter_created_total` | `kafka_topic` | Number of deadletter messages created |
 | `kafka_producer_record_error_total` | `kafka_topic` | Number of send errors |
 
@@ -300,6 +308,18 @@ Output (JSON):
 ```
 
 The `LogContextStorer` is agnostic — provide your own `ToContext`/`FromContext` helpers or use a library like `slogr`. See `example/` for a complete implementation.
+
+## Resource cleanup
+
+`Close()` must be called to avoid goroutine leaks. It is **idempotent** (safe for multiple calls) and releases all resources:
+- Closes the internal error-draining goroutine
+- Closes the internal deadletter producer
+- Closes the consumer group
+
+```go
+listener, _ := kafka.NewListener("my-group", handlers)
+defer listener.Close()
+```
 
 ## Default configuration
 

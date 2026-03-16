@@ -23,21 +23,14 @@ func (_m *MockProducer) EXPECT() *MockProducer_Expecter {
 }
 
 // Close provides a mock function with no fields
-func (_m *MockProducer) Close() error {
+func (_m *MockProducer) Close() {
 	ret := _m.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for Close")
 	}
 
-	var r0 error
-	if rf, ok := ret.Get(0).(func() error); ok {
-		r0 = rf()
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
+	_m.Called()
 }
 
 // MockProducer_Close_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Close'

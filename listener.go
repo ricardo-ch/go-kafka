@@ -8,6 +8,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/IBM/sarama"
@@ -49,6 +50,7 @@ type listener struct {
 	tracer             TracingFunc
 	logContextStorer   LogContextStorer
 	done               chan struct{}
+	closeOnce          sync.Once
 }
 
 // Listener is able to listen multiple topics with one handler by topic
@@ -86,6 +88,7 @@ func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (
 
 	consumerGroup, err := sarama.NewConsumerGroupFromClient(groupID, c)
 	if err != nil {
+		producer.Close()
 		return nil, err
 	}
 
@@ -116,6 +119,9 @@ func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (
 	// Sanity check for error topics, to avoid infinite loop
 	err = checkErrorTopicToAvoidInfiniteLoop(handlers)
 	if err != nil {
+		close(done)
+		_ = consumerGroup.Close()
+		producer.Close()
 		return nil, err
 	}
 
@@ -251,9 +257,15 @@ func (l *listener) Listen(consumerContext context.Context) error {
 // Close shuts down the listener, its consumer group, and the internal error-draining goroutine.
 // Close must be called to avoid goroutine leaks.
 func (l *listener) Close() {
-	if l.done != nil {
-		close(l.done)
+	l.closeOnce.Do(func() {
+		if l.done != nil {
+			close(l.done)
+		}
+	})
+	if l.deadletterProducer != nil {
+		l.deadletterProducer.Close()
 	}
+
 	if l.consumerGroup != nil {
 		err := l.consumerGroup.Close()
 		if err != nil {
@@ -614,6 +626,9 @@ func retryDuration(handler Handler, retryNumber int, exponentialBackoff bool) ti
 	return d
 }
 
+var defaultBackoffOnce sync.Once
+var defaultBackoffFunc BackoffFunc
+
 // getBackoffDuration returns the exponential backoff duration using (in priority order):
 // 1. The handler's custom BackoffFunc
 // 2. The global ExponentialBackoffFunc (if set by the client)
@@ -625,5 +640,8 @@ func getBackoffDuration(handler Handler, retryNumber, maxRetries int) time.Durat
 	if ExponentialBackoffFunc != nil {
 		return ExponentialBackoffFunc(retryNumber, maxRetries)
 	}
-	return sarama.NewExponentialBackoff(DurationBeforeRetry, MaxBackoffDuration)(retryNumber, maxRetries)
+	defaultBackoffOnce.Do(func() {
+		defaultBackoffFunc = sarama.NewExponentialBackoff(DurationBeforeRetry, MaxBackoffDuration)
+	})
+	return defaultBackoffFunc(retryNumber, maxRetries)
 }

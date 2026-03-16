@@ -3,13 +3,14 @@ package kafka
 import (
 	"context"
 	"log/slog"
+	"sync"
 
 	"github.com/IBM/sarama"
 )
 
 type Producer interface {
 	Produce(ctx context.Context, msg *sarama.ProducerMessage) error
-	Close() error
+	Close()
 }
 
 // producerHandler is a function that handles the production of a message.
@@ -19,6 +20,7 @@ type producer struct {
 	handler       producerHandler
 	producer      sarama.SyncProducer
 	instrumenting *ProducerMetricsService
+	closeOnce     sync.Once
 }
 
 // NewProducer creates a new producer that uses the default sarama client.
@@ -51,12 +53,12 @@ func (p *producer) Produce(ctx context.Context, msg *sarama.ProducerMessage) err
 }
 
 // Close closes the producer.
-func (p *producer) Close() error {
-	err := p.producer.Close()
-	if err != nil {
-		slog.Warn("failed to close producer", "error", err)
-	}
-	return err
+func (p *producer) Close() {
+	p.closeOnce.Do(func() {
+		if err := p.producer.Close(); err != nil {
+			slog.Warn("failed to close producer", "error", err)
+		}
+	})
 }
 
 // produce sends the message via sarama. ctx is part of the producerHandler signature
