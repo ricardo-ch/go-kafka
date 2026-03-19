@@ -14,15 +14,20 @@ var (
 )
 
 func main() {
+
 	handlers := kafka.Handlers{}
 	handlers["test-users"] = makeUserHandler(NewService())
 	kafka.Brokers = brokers
 	slog.Info("starting listener")
 
-	listener, err := kafka.NewListener(appName, handlers, kafka.WithLogContextStorer(ToContext))
+	listener, err := kafka.NewListener(appName, handlers,
+		kafka.WithLogContextStorer(ToContext),
+		kafka.WithInstrumenting(),
+	)
 	if err != nil {
 		log.Fatalln("could not initialise listener:", err)
 	}
+	defer listener.Close()
 
 	err = listener.Listen(context.Background())
 	if err != nil {

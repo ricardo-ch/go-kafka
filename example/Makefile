@@ -1,5 +1,5 @@
 run_example:
-	docker compose up -d
+	docker-compose up -d
 	@make send_msg > /dev/null # this part blocks until the broker is up
 	@echo "----"
 	@echo "kafka is running"
