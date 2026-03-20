@@ -25,13 +25,14 @@ type service struct{}
 func (s service) OnUserEvent(ctx context.Context, msg UserEvent) error {
 	fmt.Println("received user event")
 
-	if msg.Content == "deadletter" {
-		return kafka.NewUnretriableError(errors.New("deadletter"))
-	}
-
 	if msg.Content == "retry" {
 		return errors.New("retry")
 	}
-
+	if msg.Content == "omit" {
+		return kafka.NewOmittedError(errors.New("omit"))
+	}
+	if msg.Content == "deadletter" {
+		return kafka.NewUnretriableError(errors.New("deadletter"))
+	}
 	return nil
 }
