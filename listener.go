@@ -565,7 +565,7 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 
 		retryNumber++
 
-		loggerFromContext(ctx).Warn("message processing failed, will retry",
+		loggerFromContext(ctx).Error("message processing failed, will retry",
 			"error", err,
 			"retry_number", retryNumber,
 			"remaining_retries", remainingRetries,
