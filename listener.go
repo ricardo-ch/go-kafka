@@ -390,7 +390,7 @@ func (l *listener) handleErrorMessage(ctx context.Context, initialError error, h
 	}
 
 	if !isRetriableError(initialError) {
-		loggerFromContext(ctx).Warn("message not retriable, forwarding to deadletter", "error", initialError, "error_type", "unretriable")
+		loggerFromContext(ctx).Error("message not retriable, forwarding to deadletter", "error", initialError, "error_type", "unretriable")
 		if l.tryForwardToDeadletter(ctx, handler, msg, initialError) {
 			return nil
 		}
@@ -426,9 +426,7 @@ func (l *listener) tryForwardToRetry(ctx context.Context, handler Handler, msg *
 		return false
 	}
 
-	log := loggerFromContext(ctx)
-	log.Warn("forwarding message to retry topic due to initial error", "initial_error", initialError, "retry_topic", topicName)
-
+	loggerFromContext(ctx).Error("forwarding message to retry topic due to initial error", "initial_error", initialError, "retry_topic", topicName)
 	l.forwardWithRetry(ctx, msg, topicName, "retry")
 	return true
 }
@@ -444,9 +442,8 @@ func (l *listener) tryForwardToDeadletter(ctx context.Context, handler Handler, 
 	if topicName == "" {
 		return false
 	}
-	log := loggerFromContext(ctx)
-	log.Warn("forwarding message to deadletter topic due to initial error", "initial_error", initialError, "deadletter_topic", topicName)
 
+	loggerFromContext(ctx).Error("forwarding message to deadletter topic due to initial error", "initial_error", initialError, "deadletter_topic", topicName)
 	l.forwardWithRetry(ctx, msg, topicName, "deadletter")
 	return true
 }
@@ -455,8 +452,6 @@ func (l *listener) tryForwardToDeadletter(ctx context.Context, handler Handler, 
 // backoff on failure. It blocks until the message is successfully produced or the
 // context is cancelled. This guarantees the message is not lost on transient producer errors.
 func (l *listener) forwardWithRetry(ctx context.Context, msg *sarama.ConsumerMessage, topicName, kind string) {
-	log := loggerFromContext(ctx)
-
 	backoff := DurationBeforeRetry
 	attempt := 0
 
@@ -464,13 +459,13 @@ func (l *listener) forwardWithRetry(ctx context.Context, msg *sarama.ConsumerMes
 		err := l.forwardToTopic(ctx, msg, topicName)
 		if err == nil {
 			if attempt > 0 {
-				log.Debug("message forwarded to "+kind+" topic after retry", kind+"_topic", topicName, "attempts", attempt+1)
+				loggerFromContext(ctx).Debug("message forwarded to "+kind+" topic after retry", kind+"_topic", topicName, "attempts", attempt+1)
 			}
 			return
 		}
 
 		attempt++
-		log.Error("failed to forward message to "+kind+" topic, will retry",
+		loggerFromContext(ctx).Error("failed to forward message to "+kind+" topic, will retry",
 			"error", err, kind+"_topic", topicName, "attempt", attempt, "backoff", backoff.String())
 
 		timer := time.NewTimer(backoff)
@@ -478,7 +473,7 @@ func (l *listener) forwardWithRetry(ctx context.Context, msg *sarama.ConsumerMes
 		case <-timer.C:
 		case <-ctx.Done():
 			timer.Stop()
-			log.Warn("context cancelled while retrying forward to "+kind+" topic",
+			loggerFromContext(ctx).Warn("context cancelled while retrying forward to "+kind+" topic",
 				kind+"_topic", topicName, "attempts", attempt)
 			return
 		}
