@@ -382,31 +382,23 @@ func (l *listener) processMessage(ctx context.Context, msg *sarama.ConsumerMessa
 }
 
 func (l *listener) handleErrorMessage(ctx context.Context, initialError error, handler Handler, msg *sarama.ConsumerMessage) error {
-	l.recordErrorCounter(msg, initialError)
+	l.incErrorCounter(msg, initialError)
 
 	if isOmittedError(initialError) {
 		l.handleOmittedMessage(ctx, initialError, msg)
 		return nil
 	}
 
-	if !isRetriableError(initialError) {
-		loggerFromContext(ctx).Error("message not retriable, forwarding to deadletter", "error", initialError, "error_type", "unretriable")
-		if l.tryForwardToDeadletter(ctx, handler, msg, initialError) {
+	if isRetriableError(initialError) {
+		if l.tryForwardToRetry(ctx, handler, msg, initialError) {
 			return nil
 		}
-		l.incOmittedCounter(msg)
-		return fmt.Errorf("message dropped: no deadletter topic configured: %w", initialError)
-	}
-
-	if l.tryForwardToRetry(ctx, handler, msg, initialError) {
-		return nil
 	}
 
 	if l.tryForwardToDeadletter(ctx, handler, msg, initialError) {
 		return nil
 	}
 
-	l.incOmittedCounter(msg)
 	return fmt.Errorf("message dropped: no retry or deadletter topic configured: %w", initialError)
 }
 
@@ -488,7 +480,7 @@ func (l *listener) incOmittedCounter(msg *sarama.ConsumerMessage) {
 	}
 }
 
-func (l *listener) recordErrorCounter(msg *sarama.ConsumerMessage, err error) {
+func (l *listener) incErrorCounter(msg *sarama.ConsumerMessage, err error) {
 	if l.instrumenting != nil && l.instrumenting.recordErrorCounter != nil && !isOmittedError(err) {
 		l.instrumenting.recordErrorCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
 	}
@@ -609,13 +601,21 @@ func shouldRetry(retries int, err error) bool {
 // uses the handler's fixed DurationBeforeRetry with the same cap applied.
 func retryDuration(handler Handler, retryNumber int, exponentialBackoff bool) time.Duration {
 	if exponentialBackoff {
-		return getBackoffDuration(handler, retryNumber, *handler.Config.ConsumerMaxRetries)
+		consumerMaxRetries := ConsumerMaxRetries
+		if handler.Config.ConsumerMaxRetries != nil {
+			consumerMaxRetries = *handler.Config.ConsumerMaxRetries
+		}
+		return getBackoffDuration(handler, retryNumber, consumerMaxRetries)
 	}
-	d := *handler.Config.DurationBeforeRetry
-	if d > MaxBackoffDuration {
+	durationBeforeRetry := DurationBeforeRetry
+	if handler.Config.DurationBeforeRetry != nil {
+		durationBeforeRetry = *handler.Config.DurationBeforeRetry
+	}
+
+	if durationBeforeRetry > MaxBackoffDuration {
 		return MaxBackoffDuration
 	}
-	return d
+	return durationBeforeRetry
 }
 
 var defaultBackoffOnce sync.Once

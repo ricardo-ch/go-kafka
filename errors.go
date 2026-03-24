@@ -78,15 +78,15 @@ func NewOmittedError(err error) error {
 	return wrappedOmittedError{err: err}
 }
 
-// isUnretriableError checks if the error implements UnretriableError interface.
-// This allows users to create their own unretriable errors by implementing the interface.
+// isUnretriableError reports whether an err is retriable by checking if it implements the UnretriableError interface, and calling it.
+// Errors which do not implement this interface are considered retriable.
 func isUnretriableError(err error) bool {
 	var ue UnretriableError
 	return errors.As(err, &ue) && ue.IsUnretriable()
 }
 
-// isOmittedError checks if the error implements OmittedError interface.
-// This allows users to create their own omitted errors by implementing the interface.
+// isOmittedError reports whether an err is omitted by checking if it implements the OmittedError interface, and calling it.
+// Errors which do not implement this interface are considered retriable.
 func isOmittedError(err error) bool {
 	var oe OmittedError
 	return errors.As(err, &oe) && oe.IsOmitted()

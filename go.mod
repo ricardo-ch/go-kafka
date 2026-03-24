@@ -1,10 +1,11 @@
-module github.com/ricardo-ch/go-kafka/v3
+module github.com/ricardo-ch/go-kafka/v4
 
 go 1.26
 
 require (
 	github.com/IBM/sarama v1.46.3
 	github.com/prometheus/client_golang v1.23.2
+	github.com/ricardo-ch/go-kafka/v3 v3.4.0
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/otel v1.40.0
 	go.opentelemetry.io/otel/trace v1.40.0

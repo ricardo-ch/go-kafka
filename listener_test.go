@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/IBM/sarama"
-	"github.com/ricardo-ch/go-kafka/v3/mocks"
+	"github.com/ricardo-ch/go-kafka/v4/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -28,6 +29,13 @@ var (
 		Config:    testHandlerConfig,
 	}
 )
+
+// resetClient is used for testing purposes only
+func resetClient() {
+	clientOnce = sync.Once{}
+	client = nil
+	clientErr = nil
+}
 
 // saveGlobals saves current global state and restores it via t.Cleanup.
 func saveGlobals(t *testing.T) {

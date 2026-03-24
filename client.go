@@ -25,10 +25,3 @@ func getClient() (sarama.Client, error) {
 
 	return client, clientErr
 }
-
-// resetClient is used for testing purposes only
-func resetClient() {
-	clientOnce = sync.Once{}
-	client = nil
-	clientErr = nil
-}
