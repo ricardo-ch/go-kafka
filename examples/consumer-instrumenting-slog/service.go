@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/ricardo-ch/go-kafka/v3"
+	"github.com/ricardo-ch/go-kafka/v4"
 )
 
 type UserEvent struct {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ricardo-ch/go-kafka/v3"
+	"github.com/ricardo-ch/go-kafka/v4"
 )
 
 var (

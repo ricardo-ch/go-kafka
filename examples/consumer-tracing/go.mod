@@ -2,12 +2,11 @@ module ricardo.ch/go-kafka/example/consumer-tracing
 
 go 1.26.1
 
-replace github.com/ricardo-ch/go-kafka/v3 v3.4.0 => ../../../go-kafka
+replace github.com/ricardo-ch/go-kafka/v4 => ../../../go-kafka
 
 require (
 	github.com/IBM/sarama v1.47.0
-	github.com/ricardo-ch/go-kafka/v3 v3.4.0
-	github.com/ricardo-ch/go-utils/v3 v3.14.0
+	github.com/ricardo-ch/go-kafka/v4 v4.0.0-alpha
 	go.opentelemetry.io/otel v1.42.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.39.0
 	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.42.0

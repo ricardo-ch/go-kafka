@@ -9,8 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ricardo-ch/go-kafka/v3"
-	"github.com/ricardo-ch/go-utils/v3/errs"
+	"github.com/ricardo-ch/go-kafka/v4"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
@@ -78,12 +77,12 @@ func InitTracing(ctx context.Context, appName string) (*sdktrace.TracerProvider,
 	case "otlp":
 		spanExporter, err = otlptracegrpc.New(ctx, otlptracegrpc.WithInsecure())
 		if err != nil {
-			return nil, errs.New(fmt.Errorf("creating OTLP trace exporter: %w", err))
+			return nil, fmt.Errorf("creating OTLP trace exporter: %w", err)
 		}
 	default:
 		spanExporter, err = stdouttrace.New(stdouttrace.WithPrettyPrint())
 		if err != nil {
-			return nil, errs.New(fmt.Errorf("creating stdout trace exporter: %w", err))
+			return nil, fmt.Errorf("creating stdout trace exporter: %w", err)
 		}
 	}
 
@@ -95,7 +94,7 @@ func InitTracing(ctx context.Context, appName string) (*sdktrace.TracerProvider,
 		),
 	)
 	if err != nil {
-		return nil, errs.New(fmt.Errorf("merging resources: %w", err))
+		return nil, fmt.Errorf("merging resources: %w", err)
 	}
 
 	tp := sdktrace.NewTracerProvider(

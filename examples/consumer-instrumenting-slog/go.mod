@@ -2,11 +2,11 @@ module ricardo.ch/go-kafka/example/consumer-instrumenting-slog
 
 go 1.26.1
 
-replace github.com/ricardo-ch/go-kafka/v3 v3.4.0 => ../../../go-kafka
+replace github.com/ricardo-ch/go-kafka/v4 => ../../../go-kafka
 
 require (
 	github.com/IBM/sarama v1.47.0
-	github.com/ricardo-ch/go-kafka/v3 v3.4.0
+	github.com/ricardo-ch/go-kafka/v4 v4.0.0-00010101000000-000000000000
 )
 
 require (
@@ -32,9 +32,9 @@ require (
 	github.com/prometheus/procfs v0.19.2 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20250401214520-65e299d6c5c9 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
-	go.opentelemetry.io/otel v1.42.0 // indirect
-	go.opentelemetry.io/otel/metric v1.42.0 // indirect
-	go.opentelemetry.io/otel/trace v1.42.0 // indirect
+	go.opentelemetry.io/otel v1.40.0 // indirect
+	go.opentelemetry.io/otel/metric v1.40.0 // indirect
+	go.opentelemetry.io/otel/trace v1.40.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/net v0.51.0 // indirect
