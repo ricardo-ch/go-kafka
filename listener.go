@@ -406,12 +406,11 @@ func (l *listener) handleErrorMessage(ctx context.Context, initialError error, h
 // Returns false if no retry topic is configured. On producer failure, it retries
 // with exponential backoff until the message is published or the context is cancelled.
 func (l *listener) tryForwardToRetry(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage, initialError error) bool {
-	if !PushConsumerErrorsToRetryTopic {
-		return false
-	}
-
 	topicName := handler.Config.RetryTopic
 	if topicName == "" {
+		if !PushConsumerErrorsToRetryTopic {
+			return false
+		}
 		topicName = l.deduceTopicNameFromPattern(msg.Topic, RetryTopicPattern)
 	}
 	if topicName == "" {
@@ -419,6 +418,7 @@ func (l *listener) tryForwardToRetry(ctx context.Context, handler Handler, msg *
 	}
 
 	loggerFromContext(ctx).Error("forwarding message to retry topic due to initial error", "initial_error", initialError, "retry_topic", topicName)
+
 	l.forwardWithRetry(ctx, msg, topicName, "retry")
 	return true
 }
@@ -444,7 +444,7 @@ func (l *listener) tryForwardToDeadletter(ctx context.Context, handler Handler, 
 // backoff on failure. It blocks until the message is successfully produced or the
 // context is cancelled. This guarantees the message is not lost on transient producer errors.
 func (l *listener) forwardWithRetry(ctx context.Context, msg *sarama.ConsumerMessage, topicName, kind string) {
-	backoff := DurationBeforeRetry
+	backoff := min(DurationBeforeRetry, ForwardMaxBackoffDuration)
 	attempt := 0
 
 	for {
