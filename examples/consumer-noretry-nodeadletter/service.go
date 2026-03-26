@@ -23,7 +23,7 @@ func NewService() Service {
 type service struct{}
 
 func (s service) OnUserEvent(ctx context.Context, msg UserEvent) error {
-	fmt.Println("received user event")
+	fmt.Println("received user event ", msg.Content)
 
 	if msg.Content == "retry" {
 		return errors.New("retry")

@@ -308,6 +308,7 @@ func Test_ConsumeClaim_Message_Error_WithPanicTopic(t *testing.T) {
 func Test_ConsumeClaim_Message_Error_WithHandlerSpecificRetryTopic(t *testing.T) {
 	saveGlobals(t)
 	PushConsumerErrorsToRetryTopic = false
+	PushConsumerErrorsToDeadletterTopic = true
 
 	msgChanel := make(chan *sarama.ConsumerMessage, 1)
 	msgChanel <- &sarama.ConsumerMessage{
@@ -323,7 +324,11 @@ func Test_ConsumeClaim_Message_Error_WithHandlerSpecificRetryTopic(t *testing.T)
 	consumerGroupSession.On("MarkMessage", mock.Anything, mock.Anything).Return()
 
 	producer := &mocks.MockProducer{}
-	producer.On("Produce", mock.Anything, mock.Anything).Return(nil)
+	var producedTopic string
+	producer.On("Produce", mock.Anything, mock.Anything).Return(nil).Run(func(args mock.Arguments) {
+		msg := args.Get(1).(*sarama.ProducerMessage)
+		producedTopic = msg.Topic
+	})
 
 	handlerCalled := false
 	handlerProcessor := func(ctx context.Context, msg *sarama.ConsumerMessage) error {
@@ -350,6 +355,8 @@ func Test_ConsumeClaim_Message_Error_WithHandlerSpecificRetryTopic(t *testing.T)
 	// Assert
 	assert.NoError(t, err)
 	assert.True(t, handlerCalled)
+	assert.Equal(t, "retry-topic", producedTopic)
+	consumerGroupSession.AssertNumberOfCalls(t, "MarkMessage", 1)
 	consumerGroupClaim.AssertExpectations(t)
 	consumerGroupSession.AssertExpectations(t)
 	producer.AssertExpectations(t)
@@ -408,9 +415,77 @@ func Test_handleErrorMessage_OmittedError(t *testing.T) {
 	l := listener{deadletterProducer: producer}
 
 	omittedErr := fmt.Errorf("%w: %w", errors.New("should be omitted"), ErrEventOmitted)
-	l.handleErrorMessage(context.Background(), omittedErr, Handler{}, &sarama.ConsumerMessage{Topic: "test"})
+	result := l.handleErrorMessage(context.Background(), omittedErr, Handler{}, &sarama.ConsumerMessage{Topic: "test"})
 
+	assert.True(t, result.commit)
+	assert.NoError(t, result.err)
 	producer.AssertNotCalled(t, "Produce", mock.Anything)
+}
+
+func Test_handleErrorMessage_NoForwardTarget_Commits(t *testing.T) {
+	saveGlobals(t)
+	PushConsumerErrorsToRetryTopic = false
+	PushConsumerErrorsToDeadletterTopic = false
+
+	producer := &mocks.MockProducer{}
+	l := listener{deadletterProducer: producer}
+
+	result := l.handleErrorMessage(
+		context.Background(),
+		errors.New("retriable failure"),
+		Handler{},
+		&sarama.ConsumerMessage{Topic: "test"},
+	)
+
+	assert.True(t, result.commit)
+	assert.NoError(t, result.err)
+	producer.AssertNotCalled(t, "Produce", mock.Anything)
+}
+
+func Test_handleErrorMessage_ContextCanceled_DoesNotCommit(t *testing.T) {
+	producer := &mocks.MockProducer{}
+	l := listener{deadletterProducer: producer}
+
+	result := l.handleErrorMessage(
+		context.Background(),
+		context.Canceled,
+		Handler{},
+		&sarama.ConsumerMessage{Topic: "test"},
+	)
+
+	assert.False(t, result.commit)
+	assert.ErrorIs(t, result.err, context.Canceled)
+	producer.AssertNotCalled(t, "Produce", mock.Anything)
+}
+
+func Test_handleErrorMessage_ForwardRetryFailure_DoesNotCommit(t *testing.T) {
+	saveGlobals(t)
+	PushConsumerErrorsToRetryTopic = true
+	PushConsumerErrorsToDeadletterTopic = false
+	DurationBeforeRetry = 1 * time.Millisecond
+
+	producer := &mocks.MockProducer{}
+	producer.On("Produce", mock.Anything, mock.Anything).Return(errors.New("producer unavailable"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(5 * time.Millisecond)
+		cancel()
+	}()
+
+	l := listener{deadletterProducer: producer}
+
+	result := l.handleErrorMessage(
+		ctx,
+		errors.New("retriable failure"),
+		Handler{Config: HandlerConfig{RetryTopic: "retry-topic"}},
+		&sarama.ConsumerMessage{Topic: "test"},
+	)
+
+	assert.False(t, result.commit)
+	assert.Error(t, result.err)
+	assert.Contains(t, result.err.Error(), "forward to retry topic failed")
+	producer.AssertExpectations(t)
 }
 
 func Test_handleMessageWithRetry(t *testing.T) {

@@ -14,6 +14,13 @@ import (
 	"github.com/IBM/sarama"
 )
 
+var errNoForwardTarget = errors.New("no forward target configured")
+
+type processingResult struct {
+	commit bool
+	err    error
+}
+
 type HandlerConfig struct {
 	ConsumerMaxRetries  *int
 	DurationBeforeRetry *time.Duration
@@ -334,12 +341,18 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 	ctx, endSpan := l.startMessageSpan(ctx, msg)
 	defer endSpan()
 
-	err := l.processMessage(ctx, msg)
+	result := l.processMessage(ctx, msg)
 
-	if !errors.Is(err, context.Canceled) {
-		if err != nil {
-			loggerFromContext(ctx).Error("message processing failed", "error", err, "error_type", errorType(err))
+	if level, ok := processingErrorLogLevel(result.err); ok {
+		switch level {
+		case slog.LevelInfo:
+			loggerFromContext(ctx).Info("message processing completed with expected terminal state", "error", result.err, "error_type", errorType(result.err))
+		case slog.LevelError:
+			loggerFromContext(ctx).Error("message processing failed", "error", result.err, "error_type", errorType(result.err))
 		}
+	}
+
+	if result.commit {
 		session.MarkMessage(msg, "")
 		loggerFromContext(ctx).Debug("message offset committed")
 	}
@@ -366,84 +379,91 @@ func (l *listener) enrichContext(ctx context.Context, msg *sarama.ConsumerMessag
 
 // processMessage handles the full lifecycle of a single message: retry loop, error
 // classification, metrics, and forwarding to retry/deadletter topics.
-func (l *listener) processMessage(ctx context.Context, msg *sarama.ConsumerMessage) error {
+func (l *listener) processMessage(ctx context.Context, msg *sarama.ConsumerMessage) processingResult {
 	handler := l.handlers[msg.Topic]
 
 	err := l.handleMessageWithRetry(ctx, handler, msg, *handler.Config.ConsumerMaxRetries, handler.Config.ExponentialBackoff)
 	if err != nil {
-		err = l.handleErrorMessage(ctx, err, handler, msg)
-		if err != nil {
-			return fmt.Errorf("message processing failed: %w", err)
-		}
+		return l.handleErrorMessage(ctx, err, handler, msg)
 	}
 
 	loggerFromContext(ctx).Debug("message processed successfully")
-	return nil
+	return processingResult{commit: true}
 }
 
-func (l *listener) handleErrorMessage(ctx context.Context, initialError error, handler Handler, msg *sarama.ConsumerMessage) error {
+func (l *listener) handleErrorMessage(ctx context.Context, initialError error, handler Handler, msg *sarama.ConsumerMessage) processingResult {
 	l.incErrorCounter(msg, initialError)
+
+	if errors.Is(initialError, context.Canceled) {
+		return processingResult{err: context.Canceled}
+	}
 
 	if isOmittedError(initialError) {
 		l.handleOmittedMessage(ctx, initialError, msg)
-		return nil
+		return processingResult{err: initialError, commit: true}
 	}
 
 	if isRetriableError(initialError) {
-		if l.tryForwardToRetry(ctx, handler, msg, initialError) {
-			return nil
+		err := l.tryForwardToRetry(ctx, handler, msg, initialError)
+		if err == nil {
+			return processingResult{commit: true}
+		}
+		if !errors.Is(err, errNoForwardTarget) {
+			return processingResult{err: fmt.Errorf("forward to retry topic failed: %w", err)}
 		}
 	}
 
-	if l.tryForwardToDeadletter(ctx, handler, msg, initialError) {
-		return nil
+	err := l.tryForwardToDeadletter(ctx, handler, msg, initialError)
+	if err == nil {
+		return processingResult{commit: true}
+	}
+	if !errors.Is(err, errNoForwardTarget) {
+		return processingResult{err: fmt.Errorf("forward to deadletter topic failed: %w", err)}
 	}
 
-	return fmt.Errorf("message dropped: no retry or deadletter topic configured: %w", initialError)
+	loggerFromContext(ctx).Warn("message dropped: no retry or deadletter topic configured", "error", initialError, "error_type", errorType(initialError))
+	return processingResult{err: initialError, commit: true}
 }
 
 // tryForwardToRetry resolves the retry topic and forwards the message to it.
-// Returns false if no retry topic is configured. On producer failure, it retries
+// Returns errNoForwardTarget if no retry topic is configured. On producer failure, it retries
 // with exponential backoff until the message is published or the context is cancelled.
-func (l *listener) tryForwardToRetry(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage, initialError error) bool {
+func (l *listener) tryForwardToRetry(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage, initialError error) error {
 	topicName := handler.Config.RetryTopic
 	if topicName == "" {
 		if !PushConsumerErrorsToRetryTopic {
-			return false
+			return errNoForwardTarget
 		}
 		topicName = l.deduceTopicNameFromPattern(msg.Topic, RetryTopicPattern)
 	}
 	if topicName == "" {
-		return false
+		return errNoForwardTarget
 	}
 
-	loggerFromContext(ctx).Error("forwarding message to retry topic due to initial error", "initial_error", initialError, "retry_topic", topicName)
-
-	l.forwardWithRetry(ctx, msg, topicName, "retry")
-	return true
+	loggerFromContext(ctx).Error("forwarding message to retry topic due to error", "error", initialError, "retry_topic", topicName)
+	return l.forwardWithRetry(ctx, msg, topicName, "retry")
 }
 
 // tryForwardToDeadletter resolves the deadletter topic and forwards the message to it.
-// Returns false if no deadletter topic is configured. On producer failure, it retries
+// Returns errNoForwardTarget if no deadletter topic is configured. On producer failure, it retries
 // with exponential backoff until the message is published or the context is cancelled.
-func (l *listener) tryForwardToDeadletter(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage, initialError error) bool {
+func (l *listener) tryForwardToDeadletter(ctx context.Context, handler Handler, msg *sarama.ConsumerMessage, initialError error) error {
 	topicName := handler.Config.DeadletterTopic
 	if topicName == "" && PushConsumerErrorsToDeadletterTopic {
 		topicName = l.deduceTopicNameFromPattern(msg.Topic, DeadletterTopicPattern)
 	}
 	if topicName == "" {
-		return false
+		return errNoForwardTarget
 	}
 
-	loggerFromContext(ctx).Error("forwarding message to deadletter topic due to initial error", "initial_error", initialError, "deadletter_topic", topicName)
-	l.forwardWithRetry(ctx, msg, topicName, "deadletter")
-	return true
+	loggerFromContext(ctx).Error("forwarding message to deadletter topic due to error", "error", initialError, "deadletter_topic", topicName)
+	return l.forwardWithRetry(ctx, msg, topicName, "deadletter")
 }
 
 // forwardWithRetry forwards a message to the given topic, retrying with exponential
 // backoff on failure. It blocks until the message is successfully produced or the
 // context is cancelled. This guarantees the message is not lost on transient producer errors.
-func (l *listener) forwardWithRetry(ctx context.Context, msg *sarama.ConsumerMessage, topicName, kind string) {
+func (l *listener) forwardWithRetry(ctx context.Context, msg *sarama.ConsumerMessage, topicName, kind string) error {
 	backoff := min(DurationBeforeRetry, ForwardMaxBackoffDuration)
 	attempt := 0
 
@@ -453,7 +473,7 @@ func (l *listener) forwardWithRetry(ctx context.Context, msg *sarama.ConsumerMes
 			if attempt > 0 {
 				loggerFromContext(ctx).Debug("message forwarded to "+kind+" topic after retry", kind+"_topic", topicName, "attempts", attempt+1)
 			}
-			return
+			return nil
 		}
 
 		attempt++
@@ -467,7 +487,7 @@ func (l *listener) forwardWithRetry(ctx context.Context, msg *sarama.ConsumerMes
 			timer.Stop()
 			loggerFromContext(ctx).Warn("context cancelled while retrying forward to "+kind+" topic",
 				kind+"_topic", topicName, "attempts", attempt)
-			return
+			return ctx.Err()
 		}
 
 		backoff = min(backoff*2, ForwardMaxBackoffDuration)
@@ -519,7 +539,6 @@ func (l *listener) forwardToTopic(ctx context.Context, msg *sarama.ConsumerMessa
 }
 
 func (l *listener) handleOmittedMessage(ctx context.Context, initialError error, msg *sarama.ConsumerMessage) {
-	loggerFromContext(ctx).Warn("message omitted by handler", "error", initialError, "error_type", "omitted")
 	l.incOmittedCounter(msg)
 }
 
@@ -593,6 +612,16 @@ func shouldRetry(retries int, err error) bool {
 	}
 
 	return true
+}
+
+func processingErrorLogLevel(err error) (slog.Level, bool) {
+	if err == nil {
+		return 0, false
+	}
+	if isOmittedError(err) || isUnretriableError(err) || errors.Is(err, errNoForwardTarget) {
+		return slog.LevelInfo, true
+	}
+	return slog.LevelError, true
 }
 
 // retryDuration returns the wait duration before the next retry attempt, capped

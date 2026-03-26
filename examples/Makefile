@@ -30,3 +30,6 @@ send_msg_test_omit:
 
 send_msg_test_deadletter:
 	$(call SEND_JSON,{"Content":"deadletter"})
+
+send_msg_test_retry_cancel:
+	$(call SEND_JSON,{"Content":"retry-cancel"})
