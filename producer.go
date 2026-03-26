@@ -1,31 +1,36 @@
 package kafka
 
 import (
+	"context"
+	"log/slog"
+	"sync"
+
 	"github.com/IBM/sarama"
 )
 
 type Producer interface {
-	Produce(msg *sarama.ProducerMessage) error
-	Close() error
+	Produce(ctx context.Context, msg *sarama.ProducerMessage) error
+	Close()
 }
 
-// ProducerHandler is a function that handles the production of a message. It is exposed to allow for easy middleware building.
-type ProducerHandler func(p *producer, msg *sarama.ProducerMessage) error
+// producerHandler is a function that handles the production of a message.
+type producerHandler func(ctx context.Context, p *producer, msg *sarama.ProducerMessage) error
 
 type producer struct {
-	handler       ProducerHandler
+	handler       producerHandler
 	producer      sarama.SyncProducer
 	instrumenting *ProducerMetricsService
+	closeOnce     sync.Once
 }
 
 // NewProducer creates a new producer that uses the default sarama client.
 func NewProducer(options ...ProducerOption) (Producer, error) {
-	client, err := getClient()
+	c, err := getClient()
 	if err != nil {
 		return nil, err
 	}
 
-	p, err := sarama.NewSyncProducerFromClient(*client)
+	p, err := sarama.NewSyncProducerFromClient(c)
 	if err != nil {
 		return nil, err
 	}
@@ -43,16 +48,26 @@ func NewProducer(options ...ProducerOption) (Producer, error) {
 }
 
 // Produce sends a message to the kafka cluster.
-func (p *producer) Produce(msg *sarama.ProducerMessage) error {
-	return p.handler(p, msg)
+func (p *producer) Produce(ctx context.Context, msg *sarama.ProducerMessage) error {
+	return p.handler(ctx, p, msg)
 }
 
 // Close closes the producer.
-func (p *producer) Close() error {
-	return p.producer.Close()
+func (p *producer) Close() {
+	p.closeOnce.Do(func() {
+		if err := p.producer.Close(); err != nil {
+			slog.Warn("failed to close producer", "error", err)
+		}
+	})
 }
 
-func produce(p *producer, msg *sarama.ProducerMessage) error {
-	_, _, err := p.producer.SendMessage(msg)
-	return err
+// produce sends the message via sarama. ctx is part of the producerHandler signature
+// so that middleware (instrumenting, tracing) can access it; it is not used here directly.
+func produce(_ context.Context, p *producer, msg *sarama.ProducerMessage) error {
+	partition, offset, err := p.producer.SendMessage(msg)
+	if err != nil {
+		return err
+	}
+	slog.Debug("message produced", "topic", msg.Topic, "partition", partition, "offset", offset)
+	return nil
 }

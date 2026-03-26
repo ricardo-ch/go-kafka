@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"time"
 
@@ -10,8 +11,8 @@ import (
 )
 
 const (
-	TimestampTypeLogAppendTime = "LogAppendTime"
-	TimestampTypeCreateTime    = "CreateTime"
+	timestampTypeLogAppendTime = "LogAppendTime"
+	timestampTypeCreateTime    = "CreateTime"
 )
 
 var (
@@ -22,8 +23,13 @@ var (
 
 	consumergroupCurrentMessageTimestamp *prometheus.GaugeVec
 
-	consumerMetricsMutex = &sync.Mutex{}
 	consumerMetricLabels = []string{"kafka_topic", "consumer_group"}
+
+	consumerConsumedOnce  sync.Once
+	consumerLatencyOnce   sync.Once
+	consumerErrorOnce     sync.Once
+	consumerOmittedOnce   sync.Once
+	consumerTimestampOnce sync.Once
 )
 
 // ConsumerMetricsService object represents consumer metrics
@@ -38,14 +44,8 @@ type ConsumerMetricsService struct {
 	currentMessageTimestamp *prometheus.GaugeVec
 }
 
-func getPrometheusRecordConsumedInstrumentation() *prometheus.CounterVec {
-	if consumerRecordConsumedCounter != nil {
-		return consumerRecordConsumedCounter
-	}
-
-	consumerMetricsMutex.Lock()
-	defer consumerMetricsMutex.Unlock()
-	if consumerRecordConsumedCounter == nil {
+func getConsumerRecordConsumedCounter() *prometheus.CounterVec {
+	consumerConsumedOnce.Do(func() {
 		consumerRecordConsumedCounter = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Namespace: "kafka",
@@ -54,82 +54,54 @@ func getPrometheusRecordConsumedInstrumentation() *prometheus.CounterVec {
 				Help:      "Number of records consumed",
 			}, consumerMetricLabels)
 		prometheus.MustRegister(consumerRecordConsumedCounter)
-	}
-
+	})
 	return consumerRecordConsumedCounter
 }
 
-func getPrometheusRecordConsumedLatencyInstrumentation() *prometheus.HistogramVec {
-	if consumerRecordConsumedLatency != nil {
-		return consumerRecordConsumedLatency
-	}
-
-	consumerMetricsMutex.Lock()
-	defer consumerMetricsMutex.Unlock()
-	if consumerRecordConsumedLatency == nil {
+func getConsumerRecordConsumedLatency() *prometheus.HistogramVec {
+	consumerLatencyOnce.Do(func() {
 		consumerRecordConsumedLatency = prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Namespace: "kafka",
 				Subsystem: "consumer",
 				Name:      "record_latency_seconds",
-				Help:      "Total duration in milliseconds",
+				Help:      "Record processing latency in seconds",
 			}, consumerMetricLabels)
 		prometheus.MustRegister(consumerRecordConsumedLatency)
-	}
-
+	})
 	return consumerRecordConsumedLatency
 }
 
-func getPrometheusRecordConsumedErrorInstrumentation() *prometheus.CounterVec {
-	if consumerRecordErrorCounter != nil {
-		return consumerRecordErrorCounter
-	}
-
-	consumerMetricsMutex.Lock()
-	defer consumerMetricsMutex.Unlock()
-	if consumerRecordErrorCounter == nil {
+func getConsumerRecordErrorCounter() *prometheus.CounterVec {
+	consumerErrorOnce.Do(func() {
 		consumerRecordErrorCounter = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Namespace: "kafka",
 				Subsystem: "consumer",
 				Name:      "record_error_total",
-				Help:      "Number of requests dropped",
+				Help:      "Number of records that failed processing",
 			}, consumerMetricLabels)
 		prometheus.MustRegister(consumerRecordErrorCounter)
-	}
-
+	})
 	return consumerRecordErrorCounter
 }
 
-func getPrometheusRecordOmittedInstrumentation() *prometheus.CounterVec {
-	if consumerRecordOmittedCounter != nil {
-		return consumerRecordOmittedCounter
-	}
-
-	consumerMetricsMutex.Lock()
-	defer consumerMetricsMutex.Unlock()
-	if consumerRecordOmittedCounter == nil {
+func getConsumerRecordOmittedCounter() *prometheus.CounterVec {
+	consumerOmittedOnce.Do(func() {
 		consumerRecordOmittedCounter = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Namespace: "kafka",
 				Subsystem: "consumer",
 				Name:      "record_omitted_total",
-				Help:      "Number of requests dropped",
+				Help:      "Number of records omitted by handler",
 			}, consumerMetricLabels)
 		prometheus.MustRegister(consumerRecordOmittedCounter)
-	}
-
+	})
 	return consumerRecordOmittedCounter
 }
 
-func getPrometheusCurrentMessageTimestampInstrumentation() *prometheus.GaugeVec {
-	if consumergroupCurrentMessageTimestamp != nil {
-		return consumergroupCurrentMessageTimestamp
-	}
-
-	consumerMetricsMutex.Lock()
-	defer consumerMetricsMutex.Unlock()
-	if consumergroupCurrentMessageTimestamp == nil {
+func getConsumerCurrentMessageTimestamp() *prometheus.GaugeVec {
+	consumerTimestampOnce.Do(func() {
 		consumergroupCurrentMessageTimestamp = prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Namespace: "kafka",
@@ -138,8 +110,7 @@ func getPrometheusCurrentMessageTimestampInstrumentation() *prometheus.GaugeVec 
 				Help:      "Current message timestamp",
 			}, []string{"kafka_topic", "consumer_group", "partition", "type"})
 		prometheus.MustRegister(consumergroupCurrentMessageTimestamp)
-	}
-
+	})
 	return consumergroupCurrentMessageTimestamp
 }
 
@@ -147,11 +118,11 @@ func getPrometheusCurrentMessageTimestampInstrumentation() *prometheus.GaugeVec 
 func NewConsumerMetricsService(groupID string) *ConsumerMetricsService {
 	return &ConsumerMetricsService{
 		groupID:                 groupID,
-		recordConsumedCounter:   getPrometheusRecordConsumedInstrumentation(),
-		recordConsumedLatency:   getPrometheusRecordConsumedLatencyInstrumentation(),
-		recordErrorCounter:      getPrometheusRecordConsumedErrorInstrumentation(),
-		recordOmittedCounter:    getPrometheusRecordOmittedInstrumentation(),
-		currentMessageTimestamp: getPrometheusCurrentMessageTimestampInstrumentation(),
+		recordConsumedCounter:   getConsumerRecordConsumedCounter(),
+		recordConsumedLatency:   getConsumerRecordConsumedLatency(),
+		recordErrorCounter:      getConsumerRecordErrorCounter(),
+		recordOmittedCounter:    getConsumerRecordOmittedCounter(),
+		currentMessageTimestamp: getConsumerCurrentMessageTimestamp(),
 	}
 }
 
@@ -169,11 +140,11 @@ func (c *ConsumerMetricsService) Instrumentation(next Handler) Handler {
 			// Since sarama anyways sets msg.BlockTimestamp to the block timestamp,
 			// we can compare it with msg.Timestamp to know if the message was produced with the
 			// LogAppendTime timestamp type or not.
-			timestampType := TimestampTypeLogAppendTime
+			timestampType := timestampTypeLogAppendTime
 			if msg.Timestamp != msg.BlockTimestamp {
-				timestampType = TimestampTypeCreateTime
+				timestampType = timestampTypeCreateTime
 			}
-			c.currentMessageTimestamp.WithLabelValues(msg.Topic, c.groupID, string(msg.Partition), timestampType).Set(float64(msg.Timestamp.Unix()))
+			c.currentMessageTimestamp.WithLabelValues(msg.Topic, c.groupID, strconv.FormatInt(int64(msg.Partition), 10), timestampType).Set(float64(msg.Timestamp.Unix()))
 
 			err = next.Processor(ctx, msg)
 			if err == nil {
