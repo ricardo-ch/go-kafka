@@ -12,10 +12,34 @@ import (
 	"github.com/opentracing/opentracing-go"
 )
 
-var (
-	ErrEventUnretriable = errors.New("the event will not be retried")
-	ErrEventOmitted     = errors.New("the event will be omitted")
-)
+// EventProcessingError is to be used to indicate that an error occurred during the processing of an event.
+// It can be used to indicate that the event should not be retried, or that it should be omitted, in replacement
+// of the deprecated errors ErrEventUnretriable and ErrEventOmitted.
+type EventProcessingError struct {
+	msg           string
+	isUnretriable bool
+	isToBeSkipped bool
+}
+
+func (e *EventProcessingError) Error() string {
+	return e.msg
+}
+
+func (e *EventProcessingError) IsUnretriable() bool {
+	return e.isUnretriable
+}
+
+func (e *EventProcessingError) IsToBeSkipped() bool {
+	return e.isToBeSkipped
+}
+
+func NewEventProcessingError(error error, isUnretriable bool, isToBeSkipped bool) *EventProcessingError {
+	return &EventProcessingError{
+		msg:           error.Error(),
+		isUnretriable: isUnretriable,
+		isToBeSkipped: isToBeSkipped,
+	}
+}
 
 type HandlerConfig struct {
 	ConsumerMaxRetries  *int
@@ -257,9 +281,11 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 }
 
 func (l *listener) handleErrorMessage(initialError error, handler Handler, msg *sarama.ConsumerMessage) {
-	if errors.Is(initialError, ErrEventOmitted) {
-		l.handleOmittedMessage(initialError, msg)
-		return
+	if err, ok := initialError.(*EventProcessingError); ok {
+		if err.IsToBeSkipped() {
+			l.handleOmittedMessage(initialError, msg)
+			return
+		}
 	}
 
 	// Log
@@ -340,7 +366,14 @@ func forwardToTopic(l *listener, msg *sarama.ConsumerMessage, topicName string) 
 }
 
 func isRetriableError(initialError error) bool {
-	return !errors.Is(initialError, ErrEventUnretriable) && !errors.Is(initialError, ErrEventOmitted)
+	if eperr, ok := initialError.(*EventProcessingError); ok {
+		if eperr.IsUnretriable() {
+			return false
+		} else if eperr.IsToBeSkipped() {
+			return false
+		}
+	}
+	return true
 }
 
 func (l *listener) handleOmittedMessage(initialError error, msg *sarama.ConsumerMessage) {
@@ -398,10 +431,9 @@ func shouldRetry(retries int, err error) bool {
 		return false
 	}
 
-	if errors.Is(err, ErrEventUnretriable) || errors.Is(err, ErrEventOmitted) {
+	if !isRetriableError(err) {
 		return false
 	}
-
 	return true
 }
 
