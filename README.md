@@ -154,6 +154,7 @@ Note that, if global `PushConsumerErrorsToRetryTopic` or `PushConsumerErrorsToDe
 In certain scenarios, you might want to omit some errors. For example, you might want to discard outdated events that are not relevant anymore.
 Such events would increase a separate, dedicated metric instead of the error one, and would not be retried.
 To do so, wrap the errors that should lead to omitted events in a ErrEventOmitted, or return a kafka.ErrEventOmitted directly.
+
 ```go
 // This error will be omitted
 err := errors.New("my error")
@@ -162,6 +163,30 @@ return errors.Wrap(kafka.ErrEventOmitted, err.Error())
 // This error will also be omitted
 return kafka.ErrEventOmitted
 ```
+
+### DeadLetter and ErrEventUnretriable
+
+If `PushConsumerErrorsToRetryTopic` is `true` and settled in the default config or is set directly by your handler this way:
+
+```go
+func MakeHandler(service Service) kafka.Handler {
+    return kafka.Handler{
+        Processor: func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+        //...
+        },
+        Config: kafka.HandlerConfig{
+            DeadLetterTopic: config.App.KafkaTopicTransactionsDLQ,
+        },
+    }
+```
+
+... then any `kafka.ErrEventUnretriable` will end up in the dead-letter topic. It could also be a dedicated retry topic.
+
+Summary:
+
+`kafka.ErrEventUnretriable` is pushed to the following configured topic if any.
+
+`kafka.ErrEventOmitted` is always omitted, whatever your config is.
 
 ## Instrumenting
 
