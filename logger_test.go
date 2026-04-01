@@ -9,6 +9,10 @@ import (
 )
 
 func Test_kafkaMessageInfo_LogValue_AllFields(t *testing.T) {
+	previousFormat := LogFormat
+	LogFormat = LogFieldFormatCamelCase
+	t.Cleanup(func() { LogFormat = previousFormat })
+
 	info := kafkaMessageInfo{
 		Topic:         "orders",
 		Partition:     3,
@@ -27,13 +31,38 @@ func Test_kafkaMessageInfo_LogValue_AllFields(t *testing.T) {
 	}
 
 	assert.Equal(t, "orders", attrMap["topic"].String())
-	assert.Equal(t, "my-group", attrMap["consumer_group"].String())
+	assert.Equal(t, "my-group", attrMap["consumerGroup"].String())
 	assert.Equal(t, int64(3), attrMap["partition"].Int64())
 	assert.Equal(t, int64(42), attrMap["offset"].Int64())
 	assert.Equal(t, "abc-123", attrMap["key"].String())
 }
 
+func Test_kafkaMessageInfo_LogValue_SnakeCase(t *testing.T) {
+	previousFormat := LogFormat
+	LogFormat = LogFieldFormatSnakeCase
+	t.Cleanup(func() { LogFormat = previousFormat })
+
+	info := kafkaMessageInfo{
+		Topic:         "orders",
+		ConsumerGroup: "my-group",
+	}
+
+	val := info.LogValue()
+	attrs := val.Group()
+	attrMap := make(map[string]slog.Value, len(attrs))
+	for _, a := range attrs {
+		attrMap[a.Key] = a.Value
+	}
+
+	assert.Equal(t, "my-group", attrMap["consumer_group"].String())
+	assert.NotContains(t, attrMap, "consumerGroup")
+}
+
 func Test_kafkaMessageInfo_LogValue_EmptyFields(t *testing.T) {
+	previousFormat := LogFormat
+	LogFormat = LogFieldFormatCamelCase
+	t.Cleanup(func() { LogFormat = previousFormat })
+
 	info := kafkaMessageInfo{}
 
 	val := info.LogValue()
@@ -43,6 +72,10 @@ func Test_kafkaMessageInfo_LogValue_EmptyFields(t *testing.T) {
 }
 
 func Test_kafkaMessageInfo_LogValue_ZeroPartitionWithTopic(t *testing.T) {
+	previousFormat := LogFormat
+	LogFormat = LogFieldFormatCamelCase
+	t.Cleanup(func() { LogFormat = previousFormat })
+
 	info := kafkaMessageInfo{
 		Topic:     "events",
 		Partition: 0,
@@ -62,6 +95,10 @@ func Test_kafkaMessageInfo_LogValue_ZeroPartitionWithTopic(t *testing.T) {
 }
 
 func Test_kafkaMessageInfo_LogValue_PartialFields(t *testing.T) {
+	previousFormat := LogFormat
+	LogFormat = LogFieldFormatCamelCase
+	t.Cleanup(func() { LogFormat = previousFormat })
+
 	info := kafkaMessageInfo{
 		Topic:         "orders",
 		ConsumerGroup: "my-group",
@@ -75,8 +112,19 @@ func Test_kafkaMessageInfo_LogValue_PartialFields(t *testing.T) {
 	}
 
 	assert.Contains(t, attrMap, "topic")
-	assert.Contains(t, attrMap, "consumer_group")
+	assert.Contains(t, attrMap, "consumerGroup")
 	assert.NotContains(t, attrMap, "key", "empty key should be omitted")
+}
+
+func Test_logFieldName(t *testing.T) {
+	previousFormat := LogFormat
+	t.Cleanup(func() { LogFormat = previousFormat })
+
+	LogFormat = LogFieldFormatCamelCase
+	assert.Equal(t, "consumerGroup", logFieldName("consumerGroup", "consumer_group"))
+
+	LogFormat = LogFieldFormatSnakeCase
+	assert.Equal(t, "consumer_group", logFieldName("consumerGroup", "consumer_group"))
 }
 
 func Test_WithLogContextStorer(t *testing.T) {

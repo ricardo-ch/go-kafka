@@ -31,7 +31,7 @@ func (i kafkaMessageInfo) LogValue() slog.Value {
 		attrs = append(attrs, slog.String("topic", i.Topic))
 	}
 	if i.ConsumerGroup != "" {
-		attrs = append(attrs, slog.String("consumer_group", i.ConsumerGroup))
+		attrs = append(attrs, slog.String(logFieldName("consumerGroup", "consumer_group"), i.ConsumerGroup))
 	}
 	if i.Partition != 0 || i.Topic != "" {
 		attrs = append(attrs, slog.Int("partition", int(i.Partition)))
@@ -44,6 +44,24 @@ func (i kafkaMessageInfo) LogValue() slog.Value {
 	}
 
 	return slog.GroupValue(attrs...)
+}
+
+func logFieldName(camelCase, snakeCase string) string {
+	if LogFormat == LogFieldFormatSnakeCase {
+		return snakeCase
+	}
+	return camelCase
+}
+
+func logForwardTopicField(kind string) string {
+	switch kind {
+	case "retry":
+		return logFieldName("retryTopic", "retry_topic")
+	case "deadletter":
+		return logFieldName("deadletterTopic", "deadletter_topic")
+	default:
+		return kind + "Topic"
+	}
 }
 
 func WithLogContextStorer(storer LogContextStorer) ListenerOption {

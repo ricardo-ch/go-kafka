@@ -109,7 +109,7 @@ func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (
 					return
 				}
 				if err != nil {
-					slog.Error("sarama consumer error", "error", err, "consumer_group", groupID)
+					slog.Error("sarama consumer error", "error", err, logFieldName("consumerGroup", "consumer_group"), groupID)
 				}
 			case <-done:
 				return
@@ -220,13 +220,13 @@ func logHandlersConfig(groupID string, handlers Handlers) {
 		}
 
 		slog.Info("topic handler configuration",
-			"consumer_group", groupID,
+			logFieldName("consumerGroup", "consumer_group"), groupID,
 			"topic", topic,
-			"retry_mode", retryMode,
-			"max_retries", maxRetries,
+			logFieldName("retryMode", "retry_mode"), retryMode,
+			logFieldName("maxRetries", "max_retries"), maxRetries,
 			"backoff", backoffDesc,
-			"retry_topic", retryTopic,
-			"deadletter_topic", deadletterTopic,
+			logFieldName("retryTopic", "retry_topic"), retryTopic,
+			logFieldName("deadletterTopic", "deadletter_topic"), deadletterTopic,
 		)
 	}
 }
@@ -240,7 +240,7 @@ func (l *listener) Listen(consumerContext context.Context) error {
 		return errors.New("consumerGroup is nil, cannot listen")
 	}
 
-	slog.Info("starting listener", "consumer_group", l.groupID, "topics", l.topics)
+	slog.Info("starting listener", logFieldName("consumerGroup", "consumer_group"), l.groupID, "topics", l.topics)
 
 	// When a session is over, make consumer join a new session, as long as the context is not cancelled
 	for {
@@ -248,16 +248,16 @@ func (l *listener) Listen(consumerContext context.Context) error {
 		// This block until the `session` is over. (basically until next rebalance)
 		err := l.consumerGroup.Consume(consumerContext, l.topics, l)
 		if err != nil {
-			slog.Error("consumer group consume error", "error", err, "consumer_group", l.groupID)
+			slog.Error("consumer group consume error", "error", err, logFieldName("consumerGroup", "consumer_group"), l.groupID)
 			return err
 		}
 		err = consumerContext.Err()
 		if err != nil {
 			// Check if context is cancelled
-			slog.Info("listener stopping (context cancelled)", "consumer_group", l.groupID)
+			slog.Info("listener stopping (context cancelled)", logFieldName("consumerGroup", "consumer_group"), l.groupID)
 			return err
 		}
-		slog.Debug("consumer group session ended, rejoining", "consumer_group", l.groupID)
+		slog.Debug("consumer group session ended, rejoining", logFieldName("consumerGroup", "consumer_group"), l.groupID)
 	}
 }
 
@@ -276,9 +276,9 @@ func (l *listener) Close() {
 	if l.consumerGroup != nil {
 		err := l.consumerGroup.Close()
 		if err != nil {
-			slog.Error("failed to close consumer group", "error", err, "consumer_group", l.groupID)
+			slog.Error("failed to close consumer group", "error", err, logFieldName("consumerGroup", "consumer_group"), l.groupID)
 		} else {
-			slog.Debug("consumer group closed", "consumer_group", l.groupID)
+			slog.Debug("consumer group closed", logFieldName("consumerGroup", "consumer_group"), l.groupID)
 		}
 	}
 }
@@ -296,9 +296,9 @@ func (l *listener) Close() {
 // Setup is run at the beginning of a new session, before ConsumeClaim
 func (l *listener) Setup(session sarama.ConsumerGroupSession) error {
 	slog.Debug("consumer group session started",
-		"consumer_group", l.groupID,
-		"generation_id", session.GenerationID(),
-		"member_id", session.MemberID(),
+		logFieldName("consumerGroup", "consumer_group"), l.groupID,
+		logFieldName("generationID", "generation_id"), session.GenerationID(),
+		logFieldName("memberID", "member_id"), session.MemberID(),
 		"claims", session.Claims(),
 	)
 	return nil
@@ -307,9 +307,9 @@ func (l *listener) Setup(session sarama.ConsumerGroupSession) error {
 // Cleanup is run at the end of a session, once all ConsumeClaim goroutines have exited
 func (l *listener) Cleanup(session sarama.ConsumerGroupSession) error {
 	slog.Debug("consumer group session ended",
-		"consumer_group", l.groupID,
-		"generation_id", session.GenerationID(),
-		"member_id", session.MemberID(),
+		logFieldName("consumerGroup", "consumer_group"), l.groupID,
+		logFieldName("generationID", "generation_id"), session.GenerationID(),
+		logFieldName("memberID", "member_id"), session.MemberID(),
 	)
 	return nil
 }
@@ -317,10 +317,10 @@ func (l *listener) Cleanup(session sarama.ConsumerGroupSession) error {
 // ConsumeClaim must start a consumer loop of ConsumerGroupClaim's Messages().
 func (l *listener) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	slog.Debug("starting to consume partition",
-		"consumer_group", l.groupID,
+		logFieldName("consumerGroup", "consumer_group"), l.groupID,
 		"topic", claim.Topic(),
 		"partition", claim.Partition(),
-		"initial_offset", claim.InitialOffset(),
+		logFieldName("initialOffset", "initial_offset"), claim.InitialOffset(),
 	)
 
 	for msg := range claim.Messages() {
@@ -328,7 +328,7 @@ func (l *listener) ConsumeClaim(session sarama.ConsumerGroupSession, claim saram
 	}
 
 	slog.Debug("stopped consuming partition",
-		"consumer_group", l.groupID,
+		logFieldName("consumerGroup", "consumer_group"), l.groupID,
 		"topic", claim.Topic(),
 		"partition", claim.Partition(),
 	)
@@ -346,9 +346,9 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 	if level, ok := processingErrorLogLevel(result.err); ok {
 		switch level {
 		case slog.LevelInfo:
-			loggerFromContext(ctx).Info("message processing completed with expected terminal state", "error", result.err, "error_type", errorType(result.err))
+			loggerFromContext(ctx).Info("message processing completed with expected terminal state", "error", result.err, logFieldName("errorType", "error_type"), errorType(result.err))
 		case slog.LevelError:
-			loggerFromContext(ctx).Error("message processing failed", "error", result.err, "error_type", errorType(result.err))
+			loggerFromContext(ctx).Error(result.err.Error(), logFieldName("errorType", "error_type"), errorType(result.err))
 		}
 	}
 
@@ -421,7 +421,7 @@ func (l *listener) handleErrorMessage(ctx context.Context, initialError error, h
 		return processingResult{err: fmt.Errorf("forward to deadletter topic failed: %w", err)}
 	}
 
-	loggerFromContext(ctx).Warn("message dropped: no retry or deadletter topic configured", "error", initialError, "error_type", errorType(initialError))
+	loggerFromContext(ctx).Warn("message dropped: no retry or deadletter topic configured", "error", initialError, logFieldName("errorType", "error_type"), errorType(initialError))
 	return processingResult{err: initialError, commit: true}
 }
 
@@ -440,7 +440,7 @@ func (l *listener) tryForwardToRetry(ctx context.Context, handler Handler, msg *
 		return errNoForwardTarget
 	}
 
-	loggerFromContext(ctx).Error("forwarding message to retry topic due to error", "error", initialError, "retry_topic", topicName)
+	loggerFromContext(ctx).Error("forwarding message to retry topic due to error", "error", initialError, logFieldName("retryTopic", "retry_topic"), topicName)
 	return l.forwardWithRetry(ctx, msg, topicName, "retry")
 }
 
@@ -456,7 +456,7 @@ func (l *listener) tryForwardToDeadletter(ctx context.Context, handler Handler, 
 		return errNoForwardTarget
 	}
 
-	loggerFromContext(ctx).Error("forwarding message to deadletter topic due to error", "error", initialError, "deadletter_topic", topicName)
+	loggerFromContext(ctx).Error("forwarding message to deadletter topic due to error", "error", initialError, logFieldName("deadletterTopic", "deadletter_topic"), topicName)
 	return l.forwardWithRetry(ctx, msg, topicName, "deadletter")
 }
 
@@ -471,14 +471,14 @@ func (l *listener) forwardWithRetry(ctx context.Context, msg *sarama.ConsumerMes
 		err := l.forwardToTopic(ctx, msg, topicName)
 		if err == nil {
 			if attempt > 0 {
-				loggerFromContext(ctx).Debug("message forwarded to "+kind+" topic after retry", kind+"_topic", topicName, "attempts", attempt+1)
+				loggerFromContext(ctx).Debug("message forwarded to "+kind+" topic after retry", logForwardTopicField(kind), topicName, "attempts", attempt+1)
 			}
 			return nil
 		}
 
 		attempt++
 		loggerFromContext(ctx).Error("failed to forward message to "+kind+" topic, will retry",
-			"error", err, kind+"_topic", topicName, "attempt", attempt, "backoff", backoff.String())
+			"error", err, logForwardTopicField(kind), topicName, "attempt", attempt, "backoff", backoff.String())
 
 		timer := time.NewTimer(backoff)
 		select {
@@ -486,7 +486,7 @@ func (l *listener) forwardWithRetry(ctx context.Context, msg *sarama.ConsumerMes
 		case <-ctx.Done():
 			timer.Stop()
 			loggerFromContext(ctx).Warn("context cancelled while retrying forward to "+kind+" topic",
-				kind+"_topic", topicName, "attempts", attempt)
+				logForwardTopicField(kind), topicName, "attempts", attempt)
 			return ctx.Err()
 		}
 
@@ -573,10 +573,10 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 
 		loggerFromContext(ctx).Error("message processing failed, will retry",
 			"error", err,
-			"retry_number", retryNumber,
-			"remaining_retries", remainingRetries,
-			"retry_wait_duration", retryWaitDuration.Round(10*time.Millisecond).String(),
-			"exponential_backoff", exponentialBackoff,
+			logFieldName("retryNumber", "retry_number"), retryNumber,
+			logFieldName("remainingRetries", "remaining_retries"), remainingRetries,
+			logFieldName("retryWaitDuration", "retry_wait_duration"), retryWaitDuration.Round(10*time.Millisecond).String(),
+			logFieldName("exponentialBackoff", "exponential_backoff"), exponentialBackoff,
 		)
 
 		// Use time.NewTimer instead of time.After to avoid leaking the timer

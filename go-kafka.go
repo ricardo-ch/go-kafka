@@ -12,6 +12,13 @@ import (
 	"github.com/IBM/sarama"
 )
 
+type LogFieldFormat string
+
+const (
+	LogFieldFormatCamelCase LogFieldFormat = "camelCase"
+	LogFieldFormatSnakeCase LogFieldFormat = "snake_case"
+)
+
 // Brokers is the list of Kafka brokers to connect to.
 var Brokers []string
 
@@ -61,6 +68,11 @@ var RetryTopicPattern = "$$CG$$-$$T$$-retry"
 // Use $$CG$$ as consumer group placeholder
 // Use $$T$$ as original topic name placeholder
 var DeadletterTopicPattern = "$$CG$$-$$T$$-deadletter"
+
+// LogFormat controls the field naming convention used by library-emitted slog attributes.
+// Supported values: LogFieldFormatCamelCase (default), LogFieldFormatSnakeCase.
+// Set this before creating any Listener or Producer.
+var LogFormat = LogFieldFormatCamelCase
 
 // Config is the sarama (cluster) config used for the consumer and producer.
 var Config = sarama.NewConfig()

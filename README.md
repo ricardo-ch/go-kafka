@@ -267,6 +267,16 @@ producer.Produce(ctx, msg)
 
 The library uses Go's standard `log/slog` package for structured logging. It calls `slog.Default()` directly — configure logging via `slog.SetDefault()` in your application.
 
+### Log field naming
+
+Library-emitted structured log fields use `camelCase` by default. You can switch them to `snake_case` during application startup:
+
+```go
+kafka.LogFormat = kafka.LogFieldFormatSnakeCase
+```
+
+Set this before creating any `Listener` or `Producer`.
+
 ### Log levels
 
 - **DEBUG**: Message received, processed, committed, session lifecycle
@@ -296,7 +306,7 @@ Example handler:
 
 ```go
 func myHandler(ctx context.Context, msg *sarama.ConsumerMessage) error {
-    myFromContext(ctx).Info("processing order", "order_id", orderID)
+    myFromContext(ctx).Info("processing order", "orderId", orderID)
     return nil
 }
 ```
@@ -304,7 +314,7 @@ func myHandler(ctx context.Context, msg *sarama.ConsumerMessage) error {
 Output (JSON):
 
 ```json
-{"level":"INFO","msg":"processing order","kafka":{"topic":"orders","consumer_group":"my-group","partition":0,"offset":42},"order_id":"abc-123"}
+{"level":"INFO","msg":"processing order","kafka":{"topic":"orders","consumerGroup":"my-group","partition":0,"offset":42},"orderId":"abc-123"}
 ```
 
 The `LogContextStorer` is agnostic — provide your own `ToContext`/`FromContext` helpers or use a library like `slogr`. See `example/` for a complete implementation.
