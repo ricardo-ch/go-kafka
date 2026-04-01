@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/ricardo-ch/go-kafka/v4/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -60,6 +61,17 @@ func setupConsumerGroupClaimMock(claim *mocks.ConsumerGroupClaim, topic string, 
 	claim.On("Topic").Return(topic)
 	claim.On("Partition").Return(partition)
 	claim.On("InitialOffset").Return(int64(0))
+}
+
+func counterValue(t *testing.T, metric interface{ Write(*dto.Metric) error }) float64 {
+	t.Helper()
+
+	var pb dto.Metric
+	assert.NoError(t, metric.Write(&pb))
+	if pb.Counter == nil {
+		t.Fatal("metric does not contain a counter")
+	}
+	return pb.Counter.GetValue()
 }
 
 func Test_NewListener_Should_Return_Error_When_No_Broker_Provided(t *testing.T) {
@@ -429,7 +441,11 @@ func Test_handleErrorMessage_NoForwardTarget_Commits(t *testing.T) {
 
 	err := errors.New("retriable failure")
 	producer := &mocks.MockProducer{}
-	l := listener{deadletterProducer: producer}
+	l := listener{
+		groupID:            "test-group",
+		deadletterProducer: producer,
+		instrumenting:      NewConsumerMetricsService("test-group"),
+	}
 
 	result := l.handleErrorMessage(
 		context.Background(),
@@ -440,6 +456,24 @@ func Test_handleErrorMessage_NoForwardTarget_Commits(t *testing.T) {
 
 	assert.True(t, result.commit)
 	assert.ErrorIs(t, result.err, err)
+	assert.Equal(t, float64(1), counterValue(t, l.instrumenting.recordDroppedCounter.WithLabelValues("test", "test-group")))
+	producer.AssertNotCalled(t, "Produce", mock.Anything)
+}
+
+func Test_handleErrorMessage_OmittedError_DoesNotIncrementDroppedCounter(t *testing.T) {
+	producer := &mocks.MockProducer{}
+	l := listener{
+		groupID:            "test-group-omitted",
+		deadletterProducer: producer,
+		instrumenting:      NewConsumerMetricsService("test-group-omitted"),
+	}
+
+	omittedErr := fmt.Errorf("%w: %w", errors.New("should be omitted"), ErrEventOmitted)
+	result := l.handleErrorMessage(context.Background(), omittedErr, Handler{}, &sarama.ConsumerMessage{Topic: "test"})
+
+	assert.True(t, result.commit)
+	assert.ErrorIs(t, result.err, ErrEventOmitted)
+	assert.Equal(t, float64(0), counterValue(t, l.instrumenting.recordDroppedCounter.WithLabelValues("test", "test-group-omitted")))
 	producer.AssertNotCalled(t, "Produce", mock.Anything)
 }
 

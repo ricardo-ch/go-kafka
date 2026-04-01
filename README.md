@@ -72,14 +72,14 @@ state is_omitable_err <<choice>>
 skipWithoutCounting: Skip the event without impacting counters
 state is_retriable_err <<choice>>
 state is_deadletter_configured <<choice>>
-skip: Skip the event
+skip: Skip the event and increment the dropped message counter
 forwardDL: Forward to deadletter topic (with retry)
 state should_retry <<choice>>
 blocking_retry : Blocking Retry of this event
 state is_retry_topic_configured <<choice>>
 state is_deadletter_configured2 <<choice>>
 forwardRQ: Forward to Retry topic (with retry)
-skip2: Skip the event
+skip2: Skip the event and increment the dropped message counter
 defaultDL: Forward to Deadletter topic (with retry)
 
 init --> is_omitable_err
@@ -89,7 +89,7 @@ is_retriable_err --> is_deadletter_configured: Error is unretriable
 is_retriable_err --> should_retry: Error is retriable
 should_retry --> blocking_retry: There are some retries left
 should_retry --> is_retry_topic_configured : No more blocking retry
-is_deadletter_configured --> skip: No Deadletter topic configured
+is_deadletter_configured --> skip: No Deadletter topic configured 
 is_deadletter_configured --> forwardDL: Deadletter topic configured
 is_retry_topic_configured --> forwardRQ: Retry Topic Configured
 is_retry_topic_configured --> is_deadletter_configured2: No Retry Topic Configured
@@ -229,6 +229,7 @@ Metrics for the listener and the producer can be exported to Prometheus.
 | `kafka_consumer_record_latency_seconds` | `kafka_topic`, `consumer_group` | Latency of consuming a message |
 | `kafka_consumer_record_omitted_total` | `kafka_topic`, `consumer_group` | Number of messages omitted |
 | `kafka_consumer_record_error_total` | `kafka_topic`, `consumer_group` | Number of errors (after all retries exhausted) |
+| `kafka_consumer_record_dropped_total` | `kafka_topic`, `consumer_group` | Number of messages dropped because no retry or deadletter topic was configured |
 | `kafka_consumergroup_current_message_timestamp` | `kafka_topic`, `consumer_group`, `partition`, `type` | Timestamp of the current message (`LogAppendTime` or `CreateTime`) |
 | `kafka_producer_record_send_total` | `kafka_topic` | Number of messages sent |
 | `kafka_producer_record_send_latency_seconds` | `kafka_topic` | Latency of sending a message |

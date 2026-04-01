@@ -422,6 +422,7 @@ func (l *listener) handleErrorMessage(ctx context.Context, initialError error, h
 	}
 
 	loggerFromContext(ctx).Warn("message dropped: no retry or deadletter topic configured", "error", initialError, logFieldName("errorType", "error_type"), errorType(initialError))
+	l.incDroppedCounter(msg)
 	return processingResult{err: initialError, commit: true}
 }
 
@@ -503,6 +504,12 @@ func (l *listener) incOmittedCounter(msg *sarama.ConsumerMessage) {
 func (l *listener) incErrorCounter(msg *sarama.ConsumerMessage, err error) {
 	if l.instrumenting != nil && l.instrumenting.recordErrorCounter != nil && !isOmittedError(err) {
 		l.instrumenting.recordErrorCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
+	}
+}
+
+func (l *listener) incDroppedCounter(msg *sarama.ConsumerMessage) {
+	if l.instrumenting != nil && l.instrumenting.recordDroppedCounter != nil {
+		l.instrumenting.recordDroppedCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
 	}
 }
 

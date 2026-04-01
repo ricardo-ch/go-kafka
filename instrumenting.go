@@ -20,6 +20,7 @@ var (
 	consumerRecordConsumedLatency *prometheus.HistogramVec
 	consumerRecordErrorCounter    *prometheus.CounterVec
 	consumerRecordOmittedCounter  *prometheus.CounterVec
+	consumerRecordDroppedCounter  *prometheus.CounterVec
 
 	consumergroupCurrentMessageTimestamp *prometheus.GaugeVec
 
@@ -29,6 +30,7 @@ var (
 	consumerLatencyOnce   sync.Once
 	consumerErrorOnce     sync.Once
 	consumerOmittedOnce   sync.Once
+	consumerDroppedOnce   sync.Once
 	consumerTimestampOnce sync.Once
 )
 
@@ -40,6 +42,7 @@ type ConsumerMetricsService struct {
 	recordConsumedLatency *prometheus.HistogramVec
 	recordErrorCounter    *prometheus.CounterVec
 	recordOmittedCounter  *prometheus.CounterVec
+	recordDroppedCounter  *prometheus.CounterVec
 
 	currentMessageTimestamp *prometheus.GaugeVec
 }
@@ -100,6 +103,20 @@ func getConsumerRecordOmittedCounter() *prometheus.CounterVec {
 	return consumerRecordOmittedCounter
 }
 
+func getConsumerRecordDroppedCounter() *prometheus.CounterVec {
+	consumerDroppedOnce.Do(func() {
+		consumerRecordDroppedCounter = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "kafka",
+				Subsystem: "consumer",
+				Name:      "record_dropped_total",
+				Help:      "Number of records dropped without retry or deadletter forwarding",
+			}, consumerMetricLabels)
+		prometheus.MustRegister(consumerRecordDroppedCounter)
+	})
+	return consumerRecordDroppedCounter
+}
+
 func getConsumerCurrentMessageTimestamp() *prometheus.GaugeVec {
 	consumerTimestampOnce.Do(func() {
 		consumergroupCurrentMessageTimestamp = prometheus.NewGaugeVec(
@@ -122,6 +139,7 @@ func NewConsumerMetricsService(groupID string) *ConsumerMetricsService {
 		recordConsumedLatency:   getConsumerRecordConsumedLatency(),
 		recordErrorCounter:      getConsumerRecordErrorCounter(),
 		recordOmittedCounter:    getConsumerRecordOmittedCounter(),
+		recordDroppedCounter:    getConsumerRecordDroppedCounter(),
 		currentMessageTimestamp: getConsumerCurrentMessageTimestamp(),
 	}
 }
