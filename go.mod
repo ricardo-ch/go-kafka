@@ -3,7 +3,7 @@ module github.com/ricardo-ch/go-kafka/v4
 go 1.26
 
 require (
-	github.com/IBM/sarama v1.46.3
+	github.com/IBM/sarama v1.47.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/ricardo-ch/go-kafka/v3 v3.4.0
 	github.com/stretchr/testify v1.11.1
@@ -16,7 +16,6 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/eapache/go-resiliency v1.7.0 // indirect
-	github.com/eapache/go-xerial-snappy v0.0.0-20230731223053-c322873962e3 // indirect
 	github.com/eapache/queue v1.1.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
