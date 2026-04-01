@@ -418,7 +418,7 @@ func Test_handleErrorMessage_OmittedError(t *testing.T) {
 	result := l.handleErrorMessage(context.Background(), omittedErr, Handler{}, &sarama.ConsumerMessage{Topic: "test"})
 
 	assert.True(t, result.commit)
-	assert.NoError(t, result.err)
+	assert.ErrorIs(t, result.err, ErrEventOmitted)
 	producer.AssertNotCalled(t, "Produce", mock.Anything)
 }
 
@@ -427,18 +427,19 @@ func Test_handleErrorMessage_NoForwardTarget_Commits(t *testing.T) {
 	PushConsumerErrorsToRetryTopic = false
 	PushConsumerErrorsToDeadletterTopic = false
 
+	err := errors.New("retriable failure")
 	producer := &mocks.MockProducer{}
 	l := listener{deadletterProducer: producer}
 
 	result := l.handleErrorMessage(
 		context.Background(),
-		errors.New("retriable failure"),
+		err,
 		Handler{},
 		&sarama.ConsumerMessage{Topic: "test"},
 	)
 
 	assert.True(t, result.commit)
-	assert.NoError(t, result.err)
+	assert.ErrorIs(t, result.err, err)
 	producer.AssertNotCalled(t, "Produce", mock.Anything)
 }
 
