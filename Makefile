@@ -16,7 +16,6 @@ ifeq (,$(shell which mockery))
 else
 	go mod vendor
 	mockery --case "underscore" --dir vendor/github.com/IBM/sarama --output ./mocks --case "underscore" --name="(ConsumerGroupHandler)|(SyncProducer)|(ConsumerGroup)|(ConsumerGroupClaim)|(ConsumerGroupSession)"
-	mockery --case "underscore" --dir ./ --output ./mocks --name=StdLogger
 endif
 
 .PHONY: install

@@ -1,40 +1,26 @@
+// Package kafka provides opinionated Kafka consumer and producer abstractions
+// built on top of IBM/sarama, with retry, dead-lettering, Prometheus metrics,
+// and OpenTelemetry tracing.
+//
+// Global variables (Brokers, Config, ConsumerMaxRetries, etc.) must be configured
+// before creating any Listener or Producer. They are not safe for concurrent modification.
 package kafka
 
 import (
-	"io"
-	"log"
-	"os"
 	"time"
 
 	"github.com/IBM/sarama"
 )
 
+type LogFieldFormat string
+
+const (
+	LogFieldFormatCamelCase LogFieldFormat = "camelCase"
+	LogFieldFormatSnakeCase LogFieldFormat = "snake_case"
+)
+
 // Brokers is the list of Kafka brokers to connect to.
 var Brokers []string
-
-// StdLogger is used to log messages.
-
-// StdLogger is the interface used to log messages.
-// Print and println provides this type of log.
-// print(ctx, err, "key", "value")
-// print(err, "key", "value")
-// print(ctx, "key", "value")
-// print(ctx, err)
-type StdLogger interface {
-	Print(v ...interface{})
-	Printf(format string, v ...interface{})
-	Println(v ...interface{})
-}
-
-// Logger is the instance of a StdLogger interface.
-// By default it is set to discard all log messages via ioutil.Discard,
-// but you can set it to redirect wherever you want.
-var Logger StdLogger = log.New(io.Discard, "[Go-Kafka] ", log.LstdFlags)
-
-// ErrorLogger is the instance of a StdLogger interface.
-// By default it is set to output on stderr all log messages,
-// but you can set it to redirect wherever you want.
-var ErrorLogger StdLogger = log.New(os.Stderr, "[Go-Kafka] ", log.LstdFlags)
 
 // ConsumerMaxRetries is the maximum number of time we want to retry
 // to process an event before throwing the error.
@@ -48,6 +34,22 @@ const InfiniteRetries = -1
 // DurationBeforeRetry is the duration we wait between process retries.
 // By default 2 seconds.
 var DurationBeforeRetry = 2 * time.Second
+
+// MaxBackoffDuration is the maximum backoff duration for message processing retries.
+// By default 10 minute.
+var MaxBackoffDuration = 10 * time.Minute
+
+// ForwardMaxBackoffDuration is the maximum backoff duration when retrying to forward
+// a message to a retry or deadletter topic after a producer failure.
+// By default 30 seconds.
+var ForwardMaxBackoffDuration = 30 * time.Second
+
+// ExponentialBackoffFunc is the function used to calculate exponential backoff duration.
+// If nil (default), it is evaluated lazily using the current values of DurationBeforeRetry
+// and MaxBackoffDuration at the time of the first retry, via sarama.NewExponentialBackoff
+// (KIP-580 with jitter).
+// Set this to a custom function to override the default backoff strategy.
+var ExponentialBackoffFunc BackoffFunc
 
 // PushConsumerErrorsToRetryTopic is a boolean to define if messages in error have to be pushed to a retry topic.
 var PushConsumerErrorsToRetryTopic = true
@@ -67,6 +69,11 @@ var RetryTopicPattern = "$$CG$$-$$T$$-retry"
 // Use $$T$$ as original topic name placeholder
 var DeadletterTopicPattern = "$$CG$$-$$T$$-deadletter"
 
+// LogFormat controls the field naming convention used by library-emitted slog attributes.
+// Supported values: LogFieldFormatCamelCase (default), LogFieldFormatSnakeCase.
+// Set this before creating any Listener or Producer.
+var LogFormat = LogFieldFormatCamelCase
+
 // Config is the sarama (cluster) config used for the consumer and producer.
 var Config = sarama.NewConfig()
 
@@ -80,5 +87,5 @@ func init() {
 	Config.Producer.Return.Successes = true
 	Config.Producer.RequiredAcks = sarama.WaitForAll
 	Config.Producer.Partitioner = NewJVMCompatiblePartitioner
-	Config.Version = sarama.V1_1_1_0
+	Config.Version = sarama.MaxVersion
 }
