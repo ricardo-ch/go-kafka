@@ -3,7 +3,6 @@ package kafka
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/IBM/sarama"
 	"go.opentelemetry.io/otel"
