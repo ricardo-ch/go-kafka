@@ -78,7 +78,7 @@ func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (
 		return nil, errors.New("cannot create new listener, handlers cannot be empty")
 	}
 
-	// Init consumer, consume errors & messages
+	// Initialize the topics to consume
 	var topics []string
 	for k := range handlers {
 		topics = append(topics, k)
@@ -149,11 +149,12 @@ func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (
 	return l, nil
 }
 
-// GroupID return the groupID of the listener
+// GroupID returns the groupID of the listener
 func (l *listener) GroupID() string {
 	return l.groupID
 }
 
+// checkErrorTopicToAvoidInfiniteLoop checks if the error topic is configured correctly.
 func checkErrorTopicToAvoidInfiniteLoop(handlers Handlers) error {
 	for topic, handler := range handlers {
 		if handler.Config.RetryTopic == topic {
@@ -166,6 +167,7 @@ func checkErrorTopicToAvoidInfiniteLoop(handlers Handlers) error {
 	return nil
 }
 
+// fillHandlerConfigWithDefault fills the handler config with the default values.
 func fillHandlerConfigWithDefault(handlers Handlers) {
 	for k, h := range handlers {
 		if h.Config.ConsumerMaxRetries == nil {
@@ -180,6 +182,7 @@ func fillHandlerConfigWithDefault(handlers Handlers) {
 	}
 }
 
+// groupIDAndTopicReplacer creates a replacer for the groupID and topic.
 func groupIDAndTopicReplacer(groupID, topic string) *strings.Replacer {
 	return strings.NewReplacer("$$CG$$", groupID, "$$T$$", topic)
 }
@@ -335,6 +338,8 @@ func (l *listener) ConsumeClaim(session sarama.ConsumerGroupSession, claim saram
 	return nil
 }
 
+// onNewMessage processes a new message.
+// it the entry point for the message processing lifecycle.
 func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.ConsumerGroupSession) {
 	ctx := l.enrichContext(session.Context(), msg)
 
@@ -343,7 +348,7 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 
 	result := l.processMessage(ctx, msg)
 
-	if level, ok := processingErrorLogLevel(result.err); ok {
+	if level, ok := logLevelForProcessingOutcome(result.err); ok {
 		switch level {
 		case slog.LevelInfo:
 			loggerFromContext(ctx).Info("message processing completed with expected terminal state", "error", result.err, logFieldName("errorType", "error_type"), errorType(result.err))
@@ -391,11 +396,13 @@ func (l *listener) processMessage(ctx context.Context, msg *sarama.ConsumerMessa
 	return processingResult{commit: true}
 }
 
+// handleErrorMessage handles the error of a message after the retry loop.
+// forward to retry or deadletter topic following the error classification and strategy configured.
 func (l *listener) handleErrorMessage(ctx context.Context, initialError error, handler Handler, msg *sarama.ConsumerMessage) processingResult {
 	l.incErrorCounter(msg, initialError)
 
 	if isOmittedError(initialError) {
-		l.handleOmittedMessage(ctx, initialError, msg)
+		l.incOmittedCounter(msg)
 		return processingResult{err: initialError, commit: true}
 	}
 
@@ -495,29 +502,34 @@ func (l *listener) forwardWithRetry(ctx context.Context, msg *sarama.ConsumerMes
 	}
 }
 
+// incOmittedCounter increments the omitted counter if necessary.
 func (l *listener) incOmittedCounter(msg *sarama.ConsumerMessage) {
 	if l.instrumenting != nil && l.instrumenting.recordOmittedCounter != nil {
 		l.instrumenting.recordOmittedCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
 	}
 }
 
+// incErrorCounter increments the error counter if necessary.
 func (l *listener) incErrorCounter(msg *sarama.ConsumerMessage, err error) {
 	if l.instrumenting != nil && l.instrumenting.recordErrorCounter != nil && !isOmittedError(err) {
 		l.instrumenting.recordErrorCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
 	}
 }
 
+// incDroppedCounter increments the dropped counter if necessary.
 func (l *listener) incDroppedCounter(msg *sarama.ConsumerMessage) {
 	if l.instrumenting != nil && l.instrumenting.recordDroppedCounter != nil {
 		l.instrumenting.recordDroppedCounter.With(map[string]string{"kafka_topic": msg.Topic, "consumer_group": l.groupID}).Inc()
 	}
 }
 
+// deduceTopicNameFromPattern deduces the topic name.
 func (l *listener) deduceTopicNameFromPattern(topic, pattern string) string {
 	r := groupIDAndTopicReplacer(l.groupID, topic)
 	return r.Replace(pattern)
 }
 
+// forwardToTopic forwards a message to the given topic.
 func (l *listener) forwardToTopic(ctx context.Context, msg *sarama.ConsumerMessage, topicName string) error {
 	// Inject current trace context so the forwarded message
 	// is linked to the processing span that failed.
@@ -543,10 +555,6 @@ func (l *listener) forwardToTopic(ctx context.Context, msg *sarama.ConsumerMessa
 		Topic:   topicName,
 		Headers: headers,
 	})
-}
-
-func (l *listener) handleOmittedMessage(ctx context.Context, initialError error, msg *sarama.ConsumerMessage) {
-	l.incOmittedCounter(msg)
 }
 
 // handleMessageWithRetry calls the handler function and retries on failure using a loop.
@@ -609,6 +617,8 @@ func (l *listener) safeProcess(ctx context.Context, handler Handler, msg *sarama
 	return handler.Processor(ctx, msg)
 }
 
+// shouldRetry returns whether another handler attempt is allowed given the
+// remaining retry budget and the error classification.
 func shouldRetry(retries int, err error) bool {
 	if retries == 0 {
 		return false
@@ -621,7 +631,8 @@ func shouldRetry(retries int, err error) bool {
 	return true
 }
 
-func processingErrorLogLevel(err error) (slog.Level, bool) {
+// logLevelForProcessingOutcome classifies a processing error into a log level and indicates whether it should be logged.
+func logLevelForProcessingOutcome(err error) (slog.Level, bool) {
 	if err == nil {
 		return 0, false
 	}

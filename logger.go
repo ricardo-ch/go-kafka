@@ -24,6 +24,7 @@ type kafkaMessageInfo struct {
 	ConsumerGroup string `json:"consumer_group"`
 }
 
+// LogValue returns the slog.Value for the kafka message info.
 func (i kafkaMessageInfo) LogValue() slog.Value {
 	attrs := make([]slog.Attr, 0, 5)
 
@@ -46,6 +47,7 @@ func (i kafkaMessageInfo) LogValue() slog.Value {
 	return slog.GroupValue(attrs...)
 }
 
+// logFieldName returns the field name for the given camelCase or snakeCase.
 func logFieldName(camelCase, snakeCase string) string {
 	if LogFormat == LogFieldFormatSnakeCase {
 		return snakeCase
@@ -53,6 +55,7 @@ func logFieldName(camelCase, snakeCase string) string {
 	return camelCase
 }
 
+// logForwardTopicField returns the field name for the given kind.
 func logForwardTopicField(kind string) string {
 	switch kind {
 	case "retry":
@@ -64,6 +67,7 @@ func logForwardTopicField(kind string) string {
 	}
 }
 
+// WithLogContextStorer returns a ListenerOption that sets the log context storer.
 func WithLogContextStorer(storer LogContextStorer) ListenerOption {
 	return func(l *listener) {
 		l.logContextStorer = storer

@@ -13,6 +13,7 @@ var (
 	clientOnce sync.Once
 )
 
+// getClient returns the sarama client.
 func getClient() (sarama.Client, error) {
 	clientOnce.Do(func() {
 		if len(Brokers) == 0 {
