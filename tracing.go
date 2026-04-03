@@ -36,6 +36,7 @@ func (l *listener) startMessageSpan(ctx context.Context, msg *sarama.ConsumerMes
 	if span == nil {
 		return ctx, func() {}
 	}
+
 	return ctx, func() { span.End() }
 }
 
@@ -51,6 +52,7 @@ func extractCarrierFromMessage(ctx context.Context, msg *sarama.ConsumerMessage)
 	for _, h := range msg.Headers {
 		carrier[string(h.Key)] = string(h.Value)
 	}
+
 	return otel.GetTextMapPropagator().Extract(ctx, carrier)
 }
 
@@ -61,12 +63,13 @@ func extractCarrierFromMessage(ctx context.Context, msg *sarama.ConsumerMessage)
 func DefaultTracing(ctx context.Context, msg *sarama.ConsumerMessage) (trace.Span, context.Context) {
 	ctx = extractCarrierFromMessage(ctx, msg)
 
-	spanName := fmt.Sprintf("message from %s", msg.Topic)
+	spanName := "message from " + msg.Topic
 	ctx, span := otel.Tracer(tracerName).Start(ctx, spanName, trace.WithAttributes(
 		attribute.Int64("messaging.kafka.offset", msg.Offset),
 		attribute.Int64("messaging.kafka.partition", int64(msg.Partition)),
 		attribute.String("messaging.kafka.message_key", string(msg.Key)),
 	))
+
 	return span, ctx
 }
 
@@ -80,6 +83,7 @@ func GetKafkaHeadersFromContext(ctx context.Context) []sarama.RecordHeader {
 	for headerKey, headerValue := range carrier {
 		recordHeaders = append(recordHeaders, sarama.RecordHeader{Key: []byte(headerKey), Value: []byte(headerValue)})
 	}
+
 	return recordHeaders
 }
 
@@ -88,8 +92,9 @@ func GetKafkaHeadersFromContext(ctx context.Context) []sarama.RecordHeader {
 func GetContextFromKafkaMessage(ctx context.Context, msg *sarama.ConsumerMessage) (trace.Span, context.Context) {
 	ctx = extractCarrierFromMessage(ctx, msg)
 
-	spanName := fmt.Sprintf("message from %s", msg.Topic)
+	spanName := "message from " + msg.Topic
 	ctx, span := otel.Tracer(tracerName).Start(ctx, spanName)
+
 	return span, ctx
 }
 
@@ -98,6 +103,7 @@ func SerializeKafkaHeadersFromContext(ctx context.Context) (string, error) {
 	carrier := make(propagation.MapCarrier)
 	otel.GetTextMapPropagator().Inject(ctx, carrier)
 	kafkaHeadersJSON, err := json.Marshal(map[string]string(carrier))
+
 	return string(kafkaHeadersJSON), err
 }
 
@@ -109,10 +115,12 @@ func DeserializeContextFromKafkaHeaders(ctx context.Context, kafkaHeaders string
 	}
 
 	var rawHeaders map[string]string
-	if err := json.Unmarshal([]byte(kafkaHeaders), &rawHeaders); err != nil {
+	err := json.Unmarshal([]byte(kafkaHeaders), &rawHeaders)
+	if err != nil {
 		return ctx, err
 	}
 
 	carrier := propagation.MapCarrier(rawHeaders)
+
 	return otel.GetTextMapPropagator().Extract(ctx, carrier), nil
 }

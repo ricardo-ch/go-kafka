@@ -58,6 +58,7 @@ func getConsumerRecordConsumedCounter() *prometheus.CounterVec {
 			}, consumerMetricLabels)
 		prometheus.MustRegister(consumerRecordConsumedCounter)
 	})
+
 	return consumerRecordConsumedCounter
 }
 
@@ -72,6 +73,7 @@ func getConsumerRecordConsumedLatency() *prometheus.HistogramVec {
 			}, consumerMetricLabels)
 		prometheus.MustRegister(consumerRecordConsumedLatency)
 	})
+
 	return consumerRecordConsumedLatency
 }
 
@@ -86,6 +88,7 @@ func getConsumerRecordErrorCounter() *prometheus.CounterVec {
 			}, consumerMetricLabels)
 		prometheus.MustRegister(consumerRecordErrorCounter)
 	})
+
 	return consumerRecordErrorCounter
 }
 
@@ -100,6 +103,7 @@ func getConsumerRecordOmittedCounter() *prometheus.CounterVec {
 			}, consumerMetricLabels)
 		prometheus.MustRegister(consumerRecordOmittedCounter)
 	})
+
 	return consumerRecordOmittedCounter
 }
 
@@ -114,6 +118,7 @@ func getConsumerRecordDroppedCounter() *prometheus.CounterVec {
 			}, consumerMetricLabels)
 		prometheus.MustRegister(consumerRecordDroppedCounter)
 	})
+
 	return consumerRecordDroppedCounter
 }
 
@@ -128,6 +133,7 @@ func getConsumerCurrentMessageTimestamp() *prometheus.GaugeVec {
 			}, []string{"kafka_topic", "consumer_group", "partition", "type"})
 		prometheus.MustRegister(consumergroupCurrentMessageTimestamp)
 	})
+
 	return consumergroupCurrentMessageTimestamp
 }
 
@@ -168,6 +174,7 @@ func (c *ConsumerMetricsService) Instrumentation(next Handler) Handler {
 			if err == nil {
 				c.recordConsumedCounter.WithLabelValues(msg.Topic, c.groupID).Inc()
 			}
+
 			return
 		},
 		Config: next.Config,

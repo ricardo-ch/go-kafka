@@ -42,6 +42,7 @@ func getProducerRecordSendCounter() *prometheus.CounterVec {
 			}, producerMetricsLabel)
 		prometheus.MustRegister(producerRecordSendCounter)
 	})
+
 	return producerRecordSendCounter
 }
 
@@ -56,6 +57,7 @@ func getProducerDeadletterSendCounter() *prometheus.CounterVec {
 			}, producerMetricsLabel)
 		prometheus.MustRegister(producerDeadletterSendCounter)
 	})
+
 	return producerDeadletterSendCounter
 }
 
@@ -70,6 +72,7 @@ func getProducerRecordSendLatency() *prometheus.HistogramVec {
 			}, producerMetricsLabel)
 		prometheus.MustRegister(producerRecordSendLatency)
 	})
+
 	return producerRecordSendLatency
 }
 
@@ -84,6 +87,7 @@ func getProducerRecordErrorCounter() *prometheus.CounterVec {
 			}, producerMetricsLabel)
 		prometheus.MustRegister(producerRecordErrorCounter)
 	})
+
 	return producerRecordErrorCounter
 }
 
@@ -117,6 +121,7 @@ func (p *ProducerMetricsService) Instrumentation(next producerHandler) producerH
 		} else {
 			p.recordSendCounter.WithLabelValues(msg.Topic).Inc()
 		}
+
 		return
 	}
 }
@@ -135,6 +140,7 @@ func (p *ProducerMetricsService) DeadletterInstrumentation(next producerHandler)
 		} else {
 			p.deadletterRecordSendCounter.WithLabelValues(msg.Topic).Inc()
 		}
+
 		return
 	}
 }

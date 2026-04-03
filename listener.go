@@ -96,6 +96,7 @@ func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (
 	consumerGroup, err := sarama.NewConsumerGroupFromClient(groupID, c)
 	if err != nil {
 		producer.Close()
+
 		return nil, err
 	}
 
@@ -129,6 +130,7 @@ func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (
 		close(done)
 		_ = consumerGroup.Close()
 		producer.Close()
+
 		return nil, err
 	}
 
@@ -164,6 +166,7 @@ func checkErrorTopicToAvoidInfiniteLoop(handlers Handlers) error {
 			return fmt.Errorf("%w: %s", ErrDeadletterTopicCollision, topic)
 		}
 	}
+
 	return nil
 }
 
@@ -252,12 +255,14 @@ func (l *listener) Listen(consumerContext context.Context) error {
 		err := l.consumerGroup.Consume(consumerContext, l.topics, l)
 		if err != nil {
 			slog.Error("consumer group consume error", "error", err, logFieldName("consumerGroup", "consumer_group"), l.groupID)
+
 			return err
 		}
 		err = consumerContext.Err()
 		if err != nil {
 			// Check if context is cancelled
 			slog.Info("listener stopping (context cancelled)", logFieldName("consumerGroup", "consumer_group"), l.groupID)
+
 			return err
 		}
 		slog.Debug("consumer group session ended, rejoining", logFieldName("consumerGroup", "consumer_group"), l.groupID)
@@ -304,6 +309,7 @@ func (l *listener) Setup(session sarama.ConsumerGroupSession) error {
 		logFieldName("memberID", "member_id"), session.MemberID(),
 		"claims", session.Claims(),
 	)
+
 	return nil
 }
 
@@ -314,6 +320,7 @@ func (l *listener) Cleanup(session sarama.ConsumerGroupSession) error {
 		logFieldName("generationID", "generation_id"), session.GenerationID(),
 		logFieldName("memberID", "member_id"), session.MemberID(),
 	)
+
 	return nil
 }
 
@@ -335,6 +342,7 @@ func (l *listener) ConsumeClaim(session sarama.ConsumerGroupSession, claim saram
 		"topic", claim.Topic(),
 		"partition", claim.Partition(),
 	)
+
 	return nil
 }
 
@@ -379,6 +387,7 @@ func (l *listener) enrichContext(ctx context.Context, msg *sarama.ConsumerMessag
 	if l.logContextStorer != nil {
 		ctx = l.logContextStorer(ctx, kLogger)
 	}
+
 	return ctx
 }
 
@@ -393,6 +402,7 @@ func (l *listener) processMessage(ctx context.Context, msg *sarama.ConsumerMessa
 	}
 
 	loggerFromContext(ctx).Debug("message processed successfully")
+
 	return processingResult{commit: true}
 }
 
@@ -403,6 +413,7 @@ func (l *listener) handleErrorMessage(ctx context.Context, initialError error, h
 
 	if isOmittedError(initialError) {
 		l.incOmittedCounter(msg)
+
 		return processingResult{err: initialError, commit: true}
 	}
 
@@ -430,6 +441,7 @@ func (l *listener) handleErrorMessage(ctx context.Context, initialError error, h
 
 	loggerFromContext(ctx).Warn("message dropped: no retry or deadletter topic configured", "error", initialError, logFieldName("errorType", "error_type"), errorType(initialError))
 	l.incDroppedCounter(msg)
+
 	return processingResult{err: initialError, commit: true}
 }
 
@@ -449,6 +461,7 @@ func (l *listener) tryForwardToRetry(ctx context.Context, handler Handler, msg *
 	}
 
 	loggerFromContext(ctx).Error("forwarding message to retry topic due to error", "error", initialError, logFieldName("retryTopic", "retry_topic"), topicName)
+
 	return l.forwardWithRetry(ctx, msg, topicName, "retry")
 }
 
@@ -465,6 +478,7 @@ func (l *listener) tryForwardToDeadletter(ctx context.Context, handler Handler, 
 	}
 
 	loggerFromContext(ctx).Error("forwarding message to deadletter topic due to error", "error", initialError, logFieldName("deadletterTopic", "deadletter_topic"), topicName)
+
 	return l.forwardWithRetry(ctx, msg, topicName, "deadletter")
 }
 
@@ -481,6 +495,7 @@ func (l *listener) forwardWithRetry(ctx context.Context, msg *sarama.ConsumerMes
 			if attempt > 0 {
 				loggerFromContext(ctx).Debug("message forwarded to "+kind+" topic after retry", logForwardTopicField(kind), topicName, "attempts", attempt+1)
 			}
+
 			return nil
 		}
 
@@ -495,6 +510,7 @@ func (l *listener) forwardWithRetry(ctx context.Context, msg *sarama.ConsumerMes
 			timer.Stop()
 			loggerFromContext(ctx).Warn("context cancelled while retrying forward to "+kind+" topic",
 				logForwardTopicField(kind), topicName, "attempts", attempt)
+
 			return ctx.Err()
 		}
 
@@ -526,6 +542,7 @@ func (l *listener) incDroppedCounter(msg *sarama.ConsumerMessage) {
 // deduceTopicNameFromPattern deduces the topic name.
 func (l *listener) deduceTopicNameFromPattern(topic, pattern string) string {
 	r := groupIDAndTopicReplacer(l.groupID, topic)
+
 	return r.Replace(pattern)
 }
 
@@ -601,6 +618,7 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 		case <-retryWaitTimer.C:
 		case <-ctx.Done():
 			retryWaitTimer.Stop()
+
 			return ctx.Err()
 		}
 	}
@@ -614,6 +632,7 @@ func (l *listener) safeProcess(ctx context.Context, handler Handler, msg *sarama
 			loggerFromContext(ctx).Error("panic recovered during message processing", "panic", r, "stack", string(debug.Stack()))
 		}
 	}()
+
 	return handler.Processor(ctx, msg)
 }
 
@@ -639,6 +658,7 @@ func logLevelForProcessingOutcome(err error) (slog.Level, bool) {
 	if isOmittedError(err) || errors.Is(err, errNoForwardTarget) {
 		return slog.LevelInfo, true
 	}
+
 	return slog.LevelError, true
 }
 
@@ -652,6 +672,7 @@ func retryDuration(handler Handler, retryNumber int, exponentialBackoff bool) ti
 		if handler.Config.ConsumerMaxRetries != nil {
 			consumerMaxRetries = *handler.Config.ConsumerMaxRetries
 		}
+
 		return getBackoffDuration(handler, retryNumber, consumerMaxRetries)
 	}
 	durationBeforeRetry := DurationBeforeRetry
@@ -662,6 +683,7 @@ func retryDuration(handler Handler, retryNumber int, exponentialBackoff bool) ti
 	if durationBeforeRetry > MaxBackoffDuration {
 		return MaxBackoffDuration
 	}
+
 	return durationBeforeRetry
 }
 
@@ -688,5 +710,6 @@ func getBackoffDuration(handler Handler, retryNumber, maxRetries int) time.Durat
 	defaultBackoffOnce.Do(func() {
 		defaultBackoffFunc = sarama.NewExponentialBackoff(durationBeforeRetry, MaxBackoffDuration)
 	})
+
 	return defaultBackoffFunc(retryNumber, maxRetries)
 }

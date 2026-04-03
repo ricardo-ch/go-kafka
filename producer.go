@@ -55,7 +55,8 @@ func (p *producer) Produce(ctx context.Context, msg *sarama.ProducerMessage) err
 // Close closes the producer.
 func (p *producer) Close() {
 	p.closeOnce.Do(func() {
-		if err := p.producer.Close(); err != nil {
+		err := p.producer.Close()
+		if err != nil {
 			slog.Warn("failed to close producer", "error", err)
 		}
 	})
@@ -69,5 +70,6 @@ func produce(_ context.Context, p *producer, msg *sarama.ProducerMessage) error 
 		return err
 	}
 	slog.Debug("message produced", "topic", msg.Topic, "partition", partition, "offset", offset)
+
 	return nil
 }

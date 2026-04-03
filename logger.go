@@ -13,6 +13,7 @@ func loggerFromContext(ctx context.Context) *slog.Logger {
 	if l, ok := ctx.Value(loggerKey{}).(*slog.Logger); ok && l != nil {
 		return l
 	}
+
 	return slog.Default()
 }
 
@@ -52,6 +53,7 @@ func logFieldName(camelCase, snakeCase string) string {
 	if LogFormat == LogFieldFormatSnakeCase {
 		return snakeCase
 	}
+
 	return camelCase
 }
 

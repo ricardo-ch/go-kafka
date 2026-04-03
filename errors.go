@@ -61,6 +61,7 @@ func NewUnretriableError(err error) error {
 	if err == nil {
 		return nil
 	}
+
 	return wrappedUnretriableError{err: err}
 }
 
@@ -75,6 +76,7 @@ func NewOmittedError(err error) error {
 	if err == nil {
 		return nil
 	}
+
 	return wrappedOmittedError{err: err}
 }
 
@@ -82,6 +84,7 @@ func NewOmittedError(err error) error {
 // Errors which do not implement this interface are considered retriable.
 func isUnretriableError(err error) bool {
 	var ue UnretriableError
+
 	return errors.As(err, &ue) && ue.IsUnretriable()
 }
 
@@ -89,6 +92,7 @@ func isUnretriableError(err error) bool {
 // Errors which do not implement this interface are considered retriable.
 func isOmittedError(err error) bool {
 	var oe OmittedError
+
 	return errors.As(err, &oe) && oe.IsOmitted()
 }
 
