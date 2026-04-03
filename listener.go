@@ -394,13 +394,13 @@ func (l *listener) processMessage(ctx context.Context, msg *sarama.ConsumerMessa
 func (l *listener) handleErrorMessage(ctx context.Context, initialError error, handler Handler, msg *sarama.ConsumerMessage) processingResult {
 	l.incErrorCounter(msg, initialError)
 
-	if errors.Is(initialError, context.Canceled) {
-		return processingResult{err: context.Canceled}
-	}
-
 	if isOmittedError(initialError) {
 		l.handleOmittedMessage(ctx, initialError, msg)
 		return processingResult{err: initialError, commit: true}
+	}
+
+	if errors.Is(initialError, context.Canceled) {
+		return processingResult{err: context.Canceled}
 	}
 
 	if isRetriableError(initialError) {
@@ -625,7 +625,7 @@ func processingErrorLogLevel(err error) (slog.Level, bool) {
 	if err == nil {
 		return 0, false
 	}
-	if isOmittedError(err) || isUnretriableError(err) || errors.Is(err, errNoForwardTarget) {
+	if isOmittedError(err) || errors.Is(err, errNoForwardTarget) {
 		return slog.LevelInfo, true
 	}
 	return slog.LevelError, true
