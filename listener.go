@@ -668,8 +668,14 @@ func getBackoffDuration(handler Handler, retryNumber, maxRetries int) time.Durat
 	if ExponentialBackoffFunc != nil {
 		return ExponentialBackoffFunc(retryNumber, maxRetries)
 	}
+
+	durationBeforeRetry := DurationBeforeRetry
+	if handler.Config.DurationBeforeRetry != nil {
+		durationBeforeRetry = *handler.Config.DurationBeforeRetry
+	}
+
 	defaultBackoffOnce.Do(func() {
-		defaultBackoffFunc = sarama.NewExponentialBackoff(DurationBeforeRetry, MaxBackoffDuration)
+		defaultBackoffFunc = sarama.NewExponentialBackoff(durationBeforeRetry, MaxBackoffDuration)
 	})
 	return defaultBackoffFunc(retryNumber, maxRetries)
 }
