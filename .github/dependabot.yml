@@ -9,7 +9,7 @@ updates:
       critical-dependencies:
         patterns:
           - "github.com/IBM/sarama"
-          - "github.com/opentracing/opentracing-go" 
+          - "go.opentelemetry.io/otel"
           - "github.com/prometheus/client_golang"
           - "github.com/stretchr/testify"
         update-types:

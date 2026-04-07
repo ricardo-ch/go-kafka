@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
-	"github.com/ricardo-ch/go-kafka/v3"
+	"github.com/ricardo-ch/go-kafka/v4"
 )
 
 func makeUserHandler(s Service) kafka.Handler {
@@ -17,11 +17,11 @@ func makeUserHandler(s Service) kafka.Handler {
 				return err
 			}
 
-			return s.OnUserEvent(parsedMsg)
+			return s.OnUserEvent(ctx, parsedMsg)
 		},
 		Config: kafka.HandlerConfig{
-			ConsumerMaxRetries:  kafka.Ptr(2),
-			DurationBeforeRetry: kafka.Ptr(5 * time.Second),
+			ConsumerMaxRetries:  new(2),
+			DurationBeforeRetry: new(5 * time.Second),
 			ExponentialBackoff:  true,
 		},
 	}
