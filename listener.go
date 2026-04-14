@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
-	"github.com/opentracing/opentracing-go"
 )
 
 var (
@@ -232,13 +231,8 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 		messageContext = context.WithValue(messageContext, listenerContextKey(h.Key), h.Value)
 	}
 
-	var span opentracing.Span
-	if l.tracer != nil {
-		span, messageContext = l.tracer(messageContext, msg)
-		if span != nil {
-			defer span.Finish()
-		}
-	}
+	messageContext, endSpan := l.startMessageSpan(messageContext, msg)
+	defer endSpan()
 
 	handler := l.handlers[msg.Topic]
 	if l.instrumenting != nil {
@@ -420,4 +414,19 @@ func calculateExponentialBackoffDuration(retries int, baseDuration *time.Duratio
 		duration = *baseDuration
 	}
 	return duration * time.Duration(math.Pow(2, float64(retries)))
+}
+
+// startMessageSpan starts a tracing span for the given message using the listener's TracingFunc.
+// It returns the enriched context and a finish function that must be deferred by the caller.
+// If no tracer is configured, ctx is returned unchanged and finish is a no-op.
+func (l *listener) startMessageSpan(ctx context.Context, msg *sarama.ConsumerMessage) (context.Context, func()) {
+	if l.tracer == nil {
+		return ctx, func() {}
+	}
+	span, ctx := l.tracer(ctx, msg)
+	if span == nil {
+		return ctx, func() {}
+	}
+
+	return ctx, func() { span.End() }
 }
