@@ -3,65 +3,76 @@ package kafka
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/IBM/sarama"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/trace"
+	"github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go/ext"
 )
 
 const tracerName = "github.com/ricardo-ch/go-kafka"
 
-// TracingFunc is used to create tracing and/or propagate the tracing context from each message to the go context.
-// The returned span must be ended by the caller (e.g. defer span.End()).
-type TracingFunc func(ctx context.Context, msg *sarama.ConsumerMessage) (trace.Span, context.Context)
+// Deprecated: use OTELTracingFunc with WithOTELTracing instead.
+// TracingFunc is the legacy OpenTracing hook used to create tracing and/or
+// propagate the tracing context from each message to the Go context.
+// The returned span must be finished by the caller (e.g. defer span.Finish()).
+type TracingFunc func(ctx context.Context, msg *sarama.ConsumerMessage) (opentracing.Span, context.Context)
 
-// WithTracing accepts a TracingFunc to execute before each message
+// Deprecated: use WithOTELTracing.
+// WithTracing accepts the legacy OpenTracing TracingFunc to execute before each message.
 func WithTracing(tracer TracingFunc) ListenerOption {
 	return func(l *listener) {
 		l.tracer = tracer
+		l.otelTracer = nil
 	}
 }
 
-// extractCarrierFromMessage extracts propagation headers from a Kafka message into a MapCarrier.
-func extractCarrierFromMessage(ctx context.Context, msg *sarama.ConsumerMessage) context.Context {
+// Deprecated: use DefaultOTELTracing.
+// DefaultTracing implements the legacy OpenTracing TracingFunc.
+// It fetches tracing headers from the Kafka message and creates a child span
+// with Kafka metadata using the global OpenTracing tracer.
+func DefaultTracing(ctx context.Context, msg *sarama.ConsumerMessage) (opentracing.Span, context.Context) {
+	return extractOpenTracingSpanFromKafkaMessage(ctx, msg, true)
+}
+
+// Deprecated: use GetOTELContextFromKafkaMessage or GetOTELContextFromKafkaMessageWithKafkaAttributes.
+// GetContextFromKafkaMessage extracts OpenTracing headers from a Kafka message
+// and creates a span. The returned span must be finished by the caller.
+func GetContextFromKafkaMessage(ctx context.Context, msg *sarama.ConsumerMessage) (opentracing.Span, context.Context) {
+	return extractOpenTracingSpanFromKafkaMessage(ctx, msg, false)
+}
+
+func extractOpenTracingSpanFromKafkaMessage(ctx context.Context, msg *sarama.ConsumerMessage, withKafkaAttributes bool) (opentracing.Span, context.Context) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if msg == nil {
-		return ctx
-	}
-	carrier := make(propagation.MapCarrier, len(msg.Headers))
-	for _, h := range msg.Headers {
-		carrier[string(h.Key)] = string(h.Value)
+
+	carrier := make(map[string]string)
+	spanName := "message from kafka"
+	if msg != nil {
+		carrier = make(map[string]string, len(msg.Headers))
+		for _, h := range msg.Headers {
+			carrier[string(h.Key)] = string(h.Value)
+		}
+		spanName = fmt.Sprintf("message from %s", msg.Topic)
 	}
 
-	return otel.GetTextMapPropagator().Extract(ctx, carrier)
+	var fields *map[string]interface{}
+	if withKafkaAttributes && msg != nil {
+		fields = &map[string]interface{}{
+			"offset":    msg.Offset,
+			"partition": msg.Partition,
+			"key":       string(msg.Key),
+		}
+	}
+
+	return extractOpenTracingContextFromCarrier(ctx, carrier, spanName, fields)
 }
 
-// DefaultTracing implements TracingFunc using OpenTelemetry.
-// It extracts W3C Trace Context headers from the Kafka message, then creates a child span
-// with messaging-specific attributes.
-// Usage: `listener, err = kafka.NewListener(appName, handlers, kafka.WithTracing(kafka.DefaultTracing))`
-func DefaultTracing(ctx context.Context, msg *sarama.ConsumerMessage) (trace.Span, context.Context) {
-	ctx = extractCarrierFromMessage(ctx, msg)
-
-	spanName := "message from " + msg.Topic
-	ctx, span := otel.Tracer(tracerName).Start(ctx, spanName, trace.WithAttributes(
-		attribute.Int64("messaging.kafka.offset", msg.Offset),
-		attribute.Int64("messaging.kafka.partition", int64(msg.Partition)),
-		attribute.String("messaging.kafka.message_key", string(msg.Key)),
-	))
-
-	return span, ctx
-}
-
-// GetKafkaHeadersFromContext fetches tracing metadata from context and returns them as []RecordHeader.
-// Uses W3C Trace Context format (traceparent, tracestate).
+// Deprecated: use GetOTELKafkaHeadersFromContext.
+// GetKafkaHeadersFromContext fetches OpenTracing metadata from context and returns them as []RecordHeader.
 func GetKafkaHeadersFromContext(ctx context.Context) []sarama.RecordHeader {
-	carrier := make(propagation.MapCarrier)
-	otel.GetTextMapPropagator().Inject(ctx, carrier)
+	carrier := injectOpenTracingContextIntoCarrier(ctx)
 
 	recordHeaders := make([]sarama.RecordHeader, 0, len(carrier))
 	for headerKey, headerValue := range carrier {
@@ -71,27 +82,15 @@ func GetKafkaHeadersFromContext(ctx context.Context) []sarama.RecordHeader {
 	return recordHeaders
 }
 
-// GetContextFromKafkaMessage extracts tracing headers from a Kafka message and creates a span.
-// The returned span must be ended by the caller (e.g. defer span.End()).
-func GetContextFromKafkaMessage(ctx context.Context, msg *sarama.ConsumerMessage) (trace.Span, context.Context) {
-	ctx = extractCarrierFromMessage(ctx, msg)
-
-	spanName := "message from " + msg.Topic
-	ctx, span := otel.Tracer(tracerName).Start(ctx, spanName)
-
-	return span, ctx
-}
-
-// SerializeKafkaHeadersFromContext fetches tracing metadata from context and serializes it into a JSON map[string]string.
+// Deprecated: use SerializeOTELKafkaHeadersFromContext.
+// SerializeKafkaHeadersFromContext fetches OpenTracing metadata from context and serializes it into a JSON map[string]string.
 func SerializeKafkaHeadersFromContext(ctx context.Context) (string, error) {
-	carrier := make(propagation.MapCarrier)
-	otel.GetTextMapPropagator().Inject(ctx, carrier)
-	kafkaHeadersJSON, err := json.Marshal(map[string]string(carrier))
-
+	kafkaHeadersJSON, err := json.Marshal(injectOpenTracingContextIntoCarrier(ctx))
 	return string(kafkaHeadersJSON), err
 }
 
-// DeserializeContextFromKafkaHeaders extracts tracing headers from a JSON-encoded carrier and returns the enriched context.
+// Deprecated: use DeserializeOTELContextFromKafkaHeaders.
+// DeserializeContextFromKafkaHeaders extracts OpenTracing headers from a JSON-encoded carrier and returns the enriched context.
 // On error, the original context is returned alongside the error.
 func DeserializeContextFromKafkaHeaders(ctx context.Context, kafkaHeaders string) (context.Context, error) {
 	if ctx == nil {
@@ -99,12 +98,40 @@ func DeserializeContextFromKafkaHeaders(ctx context.Context, kafkaHeaders string
 	}
 
 	var rawHeaders map[string]string
-	err := json.Unmarshal([]byte(kafkaHeaders), &rawHeaders)
-	if err != nil {
+	if err := json.Unmarshal([]byte(kafkaHeaders), &rawHeaders); err != nil {
 		return ctx, err
 	}
 
-	carrier := propagation.MapCarrier(rawHeaders)
+	_, extractedCtx := extractOpenTracingContextFromCarrier(ctx, opentracing.TextMapCarrier(rawHeaders), "", nil)
+	return extractedCtx, nil
+}
 
-	return otel.GetTextMapPropagator().Extract(ctx, carrier), nil
+func injectOpenTracingContextIntoCarrier(ctx context.Context) opentracing.TextMapCarrier {
+	carrier := opentracing.TextMapCarrier{}
+
+	span := opentracing.SpanFromContext(ctx)
+	if span == nil {
+		return carrier
+	}
+
+	ext.SpanKindProducer.Set(span)
+	_ = opentracing.GlobalTracer().Inject(span.Context(), opentracing.TextMap, carrier)
+
+	return carrier
+}
+
+func extractOpenTracingContextFromCarrier(ctx context.Context, carrier opentracing.TextMapCarrier, spanName string, tags *map[string]interface{}) (opentracing.Span, context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	wireContext, _ := opentracing.GlobalTracer().Extract(opentracing.TextMap, carrier)
+	span := opentracing.GlobalTracer().StartSpan(spanName, ext.RPCServerOption(wireContext))
+	if tags != nil {
+		for k, v := range *tags {
+			span.SetTag(k, v)
+		}
+	}
+
+	return span, opentracing.ContextWithSpan(ctx, span)
 }

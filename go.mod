@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/IBM/sarama v1.47.0
+	github.com/opentracing/opentracing-go v1.2.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/otel v1.43.0

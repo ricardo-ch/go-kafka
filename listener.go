@@ -44,6 +44,7 @@ type listener struct {
 	groupID            string
 	instrumenting      *ConsumerMetricsService
 	tracer             TracingFunc
+	otelTracer         OTELTracingFunc
 }
 
 // listenerContextKey defines the key to provide in context
@@ -420,13 +421,20 @@ func calculateExponentialBackoffDuration(retries int, baseDuration *time.Duratio
 // It returns the enriched context and a finish function that must be deferred by the caller.
 // If no tracer is configured, ctx is returned unchanged and finish is a no-op.
 func (l *listener) startMessageSpan(ctx context.Context, msg *sarama.ConsumerMessage) (context.Context, func()) {
-	if l.tracer == nil {
-		return ctx, func() {}
+	if l.otelTracer != nil {
+		span, ctx := l.otelTracer(ctx, msg)
+		if span == nil {
+			return ctx, func() {}
+		}
+		return ctx, func() { span.End() }
 	}
-	span, ctx := l.tracer(ctx, msg)
-	if span == nil {
-		return ctx, func() {}
+	if l.tracer != nil {
+		span, ctx := l.tracer(ctx, msg)
+		if span == nil {
+			return ctx, func() {}
+		}
+		return ctx, func() { span.Finish() }
 	}
 
-	return ctx, func() { span.End() }
+	return ctx, func() {}
 }
