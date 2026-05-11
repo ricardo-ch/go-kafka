@@ -24,6 +24,11 @@ type service struct{}
 func (s service) OnUserEvent(ctx context.Context, msg UserEvent) error {
 	From(ctx).Info("received user event", "content", msg.Content)
 
+	if msg.Content == "hello" {
+		From(ctx).InfoContext(ctx, "processing message")
+		return nil
+	}
+
 	if msg.Content == "retry" {
 		return errors.New("retry")
 	}
