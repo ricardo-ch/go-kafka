@@ -116,6 +116,51 @@ func Test_kafkaMessageInfo_LogValue_PartialFields(t *testing.T) {
 	assert.NotContains(t, attrMap, "key", "empty key should be omitted")
 }
 
+func Test_kafkaMessageKeyForLog(t *testing.T) {
+	tests := []struct {
+		name string
+		key  []byte
+		want string
+	}{
+		{
+			name: "plain string key",
+			key:  []byte("187563"),
+			want: "187563",
+		},
+		{
+			name: "json encoded string key",
+			key:  []byte(`"187563"`),
+			want: "187563",
+		},
+		{
+			name: "empty key",
+			key:  nil,
+			want: "",
+		},
+		{
+			name: "non string json key",
+			key:  []byte(`187563`),
+			want: "187563",
+		},
+		{
+			name: "invalid json string key",
+			key:  []byte(`"187563`),
+			want: `"187563`,
+		},
+		{
+			name: "escaped json string key",
+			key:  []byte(`"order\"123"`),
+			want: `order"123`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, kafkaMessageKeyForLog(tt.key))
+		})
+	}
+}
+
 func Test_logFieldName(t *testing.T) {
 	previousFormat := LogFormat
 	t.Cleanup(func() { LogFormat = previousFormat })
