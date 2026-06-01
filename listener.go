@@ -379,7 +379,7 @@ func (l *listener) enrichContext(ctx context.Context, msg *sarama.ConsumerMessag
 		info.Topic = msg.Topic
 		info.Partition = msg.Partition
 		info.Offset = msg.Offset
-		info.Key = string(msg.Key)
+		info.Key = kafkaMessageKeyForLog(msg.Key)
 	}
 	kLogger := slog.With("kafka", info)
 	ctx = context.WithValue(ctx, loggerKey{}, kLogger)

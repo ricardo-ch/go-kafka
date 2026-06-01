@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 )
 
@@ -46,6 +47,23 @@ func (i kafkaMessageInfo) LogValue() slog.Value {
 	}
 
 	return slog.GroupValue(attrs...)
+}
+
+// kafkaMessageKeyForLog returns a readable key value for structured logs.
+// Some producers encode string keys as JSON strings, which otherwise show up
+// in JSON logs as escaped quotes (for example, "\"187563\"").
+func kafkaMessageKeyForLog(key []byte) string {
+	raw := string(key)
+	if raw == "" {
+		return raw
+	}
+
+	var decoded string
+	if err := json.Unmarshal(key, &decoded); err == nil {
+		return decoded
+	}
+
+	return raw
 }
 
 // logFieldName returns the field name for the given camelCase or snakeCase.
