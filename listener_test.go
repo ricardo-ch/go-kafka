@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/ricardo-ch/go-kafka/v4/mocks"
 	"github.com/stretchr/testify/assert"
@@ -72,6 +73,17 @@ func counterValue(t *testing.T, metric interface{ Write(*dto.Metric) error }) fl
 		t.Fatal("metric does not contain a counter")
 	}
 	return pb.Counter.GetValue()
+}
+
+func histogramSampleCount(t *testing.T, metric interface{ Write(*dto.Metric) error }) uint64 {
+	t.Helper()
+
+	var pb dto.Metric
+	assert.NoError(t, metric.Write(&pb))
+	if pb.Histogram == nil {
+		t.Fatal("metric does not contain a histogram")
+	}
+	return pb.Histogram.GetSampleCount()
 }
 
 func Test_NewListener_Should_Return_Error_When_No_Broker_Provided(t *testing.T) {
@@ -521,6 +533,127 @@ func Test_handleErrorMessage_ForwardRetryFailure_DoesNotCommit(t *testing.T) {
 	assert.Error(t, result.err)
 	assert.Contains(t, result.err.Error(), "forward to retry topic failed")
 	producer.AssertExpectations(t)
+}
+
+func Test_forwardWithRetry_RecordsForwardingMetrics(t *testing.T) {
+	saveGlobals(t)
+	DurationBeforeRetry = time.Millisecond
+
+	producer := &mocks.MockProducer{}
+	producer.On("Produce", mock.Anything, mock.Anything).Return(errors.New("producer unavailable")).Once()
+	producer.On("Produce", mock.Anything, mock.Anything).Return(nil)
+
+	l := listener{
+		groupID:            "forwarding-metrics-group",
+		deadletterProducer: producer,
+		instrumenting:      NewConsumerMetricsService("forwarding-metrics-group"),
+	}
+	msg := &sarama.ConsumerMessage{Topic: "source-topic"}
+
+	assert.NoError(t, l.forwardWithRetry(context.Background(), msg, "retry-topic", "retry"))
+	assert.Equal(t, float64(1), counterValue(t, l.instrumenting.recordForwardedCounter.WithLabelValues("source-topic", "forwarding-metrics-group", "retry")))
+	assert.Equal(t, float64(1), counterValue(t, l.instrumenting.recordForwardRetryCounter.WithLabelValues("source-topic", "forwarding-metrics-group", "retry")))
+	assert.NoError(t, l.forwardWithRetry(context.Background(), msg, "deadletter-topic", "deadletter"))
+	assert.Equal(t, float64(1), counterValue(t, l.instrumenting.recordForwardedCounter.WithLabelValues("source-topic", "forwarding-metrics-group", "deadletter")))
+	producer.AssertExpectations(t)
+}
+
+func Test_processMessage_RecordsRetriesAndOneLifecycleLatencySample(t *testing.T) {
+	saveGlobals(t)
+	DurationBeforeRetry = time.Millisecond
+
+	attempts := 0
+	handler := Handler{
+		Processor: func(context.Context, *sarama.ConsumerMessage) error {
+			attempts++
+			if attempts < 3 {
+				return errors.New("temporary failure")
+			}
+			return nil
+		},
+		Config: HandlerConfig{
+			ConsumerMaxRetries:  new(2),
+			DurationBeforeRetry: new(time.Millisecond),
+		},
+	}
+	l := listener{
+		groupID:       "retry-metrics-group",
+		handlers:      map[string]Handler{"source-topic": handler},
+		instrumenting: NewConsumerMetricsService("retry-metrics-group"),
+	}
+	msg := &sarama.ConsumerMessage{Topic: "source-topic"}
+	latency, ok := l.instrumenting.recordConsumedLatency.WithLabelValues("source-topic", "retry-metrics-group").(prometheus.Metric)
+	assert.True(t, ok)
+	before := histogramSampleCount(t, latency)
+
+	result := l.processMessage(context.Background(), msg)
+
+	assert.True(t, result.commit)
+	assert.Equal(t, 3, attempts)
+	assert.Equal(t, float64(2), counterValue(t, l.instrumenting.recordRetryCounter.WithLabelValues("source-topic", "retry-metrics-group")))
+	assert.Equal(t, before+1, histogramSampleCount(t, latency))
+}
+
+func Test_processMessage_RecordsOneLifecycleLatencySampleForTerminalError(t *testing.T) {
+	saveGlobals(t)
+	PushConsumerErrorsToRetryTopic = false
+	PushConsumerErrorsToDeadletterTopic = false
+
+	l := listener{
+		groupID: "terminal-error-metrics-group",
+		handlers: map[string]Handler{
+			"source-topic": {
+				Processor: func(context.Context, *sarama.ConsumerMessage) error {
+					return errors.New("permanent failure")
+				},
+				Config: HandlerConfig{ConsumerMaxRetries: new(0)},
+			},
+		},
+		instrumenting: NewConsumerMetricsService("terminal-error-metrics-group"),
+	}
+	msg := &sarama.ConsumerMessage{Topic: "source-topic"}
+	latency, ok := l.instrumenting.recordConsumedLatency.WithLabelValues("source-topic", "terminal-error-metrics-group").(prometheus.Metric)
+	assert.True(t, ok)
+	before := histogramSampleCount(t, latency)
+
+	result := l.processMessage(context.Background(), msg)
+
+	assert.True(t, result.commit)
+	assert.Equal(t, before+1, histogramSampleCount(t, latency))
+}
+
+func Test_onNewMessage_RecordsEveryReceivedMessage(t *testing.T) {
+	saveGlobals(t)
+	PushConsumerErrorsToRetryTopic = false
+	PushConsumerErrorsToDeadletterTopic = false
+
+	metrics := NewConsumerMetricsService("consumed-metrics-group")
+	calls := 0
+	handler := metrics.Instrumentation(Handler{
+		Processor: func(context.Context, *sarama.ConsumerMessage) error {
+			calls++
+			if calls == 2 {
+				return errors.New("terminal failure")
+			}
+			return nil
+		},
+		Config: HandlerConfig{ConsumerMaxRetries: new(0)},
+	})
+	l := listener{
+		groupID:       "consumed-metrics-group",
+		handlers:      map[string]Handler{"source-topic": handler},
+		instrumenting: metrics,
+	}
+	session := &mocks.ConsumerGroupSession{}
+	session.On("Context").Return(context.Background())
+	session.On("MarkMessage", mock.Anything, "").Return()
+
+	l.onNewMessage(&sarama.ConsumerMessage{Topic: "source-topic"}, session)
+	l.onNewMessage(&sarama.ConsumerMessage{Topic: "source-topic"}, session)
+
+	assert.Equal(t, float64(2), counterValue(t, metrics.recordConsumedCounter.WithLabelValues("source-topic", "consumed-metrics-group")))
+	session.AssertNumberOfCalls(t, "MarkMessage", 2)
+	session.AssertExpectations(t)
 }
 
 func Test_handleMessageWithRetry(t *testing.T) {
