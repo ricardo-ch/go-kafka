@@ -222,18 +222,24 @@ If global forwarding is disabled but a handler has a custom retry/deadletter top
 ## Instrumenting
 
 Metrics for the listener and the producer can be exported to Prometheus.
+The listener's retry and deadletter forwarding metrics are emitted when it is configured with `WithInstrumenting()`.
+`kafka_producer_dead_letter_created_total` and `WithDeadletterProducerInstrumenting()` are deprecated.
+Use `kafka_consumer_record_forwarded_total{type="deadletter"}` with `WithInstrumenting()` on the listener; it distinguishes deadletter forwarding from retry-topic forwarding.
 
 | Metric name | Labels | Description |
 |-------------|--------|-------------|
-| `kafka_consumer_record_consumed_total` | `kafka_topic`, `consumer_group` | Number of messages consumed |
-| `kafka_consumer_record_latency_seconds` | `kafka_topic`, `consumer_group` | Latency of consuming a message |
+| `kafka_consumer_record_consumed_total` | `kafka_topic`, `consumer_group` | Number of Kafka records received by the listener, regardless of processing outcome |
+| `kafka_consumer_record_latency_seconds` | `kafka_topic`, `consumer_group` | End-to-end message processing latency, including handler retries, backoff, and forwarding |
 | `kafka_consumer_record_omitted_total` | `kafka_topic`, `consumer_group` | Number of messages omitted |
-| `kafka_consumer_record_error_total` | `kafka_topic`, `consumer_group` | Number of errors (after all retries exhausted) |
+| `kafka_consumer_record_error_total` | `kafka_topic`, `consumer_group` | Number of non-omitted messages whose processing ended with an error |
 | `kafka_consumer_record_dropped_total` | `kafka_topic`, `consumer_group` | Number of messages dropped because no retry or deadletter topic was configured |
+| `kafka_consumer_record_retry_total` | `kafka_topic`, `consumer_group` | Number of handler retry attempts |
+| `kafka_consumer_record_forwarded_total` | `kafka_topic`, `consumer_group`, `type` | Number of failed messages successfully forwarded; `type` is `retry` or `deadletter` |
+| `kafka_consumer_record_forward_retry_total` | `kafka_topic`, `consumer_group`, `type` | Number of retry attempts after a failed forward; `type` is `retry` or `deadletter` |
 | `kafka_consumergroup_current_message_timestamp` | `kafka_topic`, `consumer_group`, `partition`, `type` | Timestamp of the current message (`LogAppendTime` or `CreateTime`) |
 | `kafka_producer_record_send_total` | `kafka_topic` | Number of messages sent |
 | `kafka_producer_record_send_latency_seconds` | `kafka_topic` | Latency of sending a message |
-| `kafka_producer_dead_letter_created_total` | `kafka_topic` | Number of deadletter messages created |
+| `kafka_producer_dead_letter_created_total` | `kafka_topic` | **Deprecated.** Use `kafka_consumer_record_forwarded_total{type="deadletter"}` instead |
 | `kafka_producer_record_error_total` | `kafka_topic` | Number of send errors |
 
 ### Enabling metrics and tracing
