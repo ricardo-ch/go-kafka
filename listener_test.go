@@ -898,6 +898,28 @@ func Test_Listen_ContextCanceled(t *testing.T) {
 	consumerGroup.AssertExpectations(t)
 }
 
+func Test_Listen_ShutdownDoesNotRejoinClosedGroup(t *testing.T) {
+	consumeStarted := make(chan struct{})
+	sessionEnded := make(chan struct{})
+	consumerGroup := &mocks.ConsumerGroup{}
+	consumerGroup.On("Consume", mock.Anything, mock.Anything, mock.Anything).
+		Run(func(mock.Arguments) {
+			close(consumeStarted)
+			<-sessionEnded
+		}).Return(nil).Once()
+	consumerGroup.On("PauseAll").Run(func(mock.Arguments) { close(sessionEnded) }).Return().Once()
+	consumerGroup.On("Close").Return(nil).Once()
+
+	l := &listener{consumerGroup: consumerGroup}
+	listenDone := make(chan error, 1)
+	go func() { listenDone <- l.Listen(context.Background()) }()
+	<-consumeStarted
+
+	assert.NoError(t, l.Shutdown(context.Background()))
+	assert.NoError(t, <-listenDone)
+	consumerGroup.AssertExpectations(t)
+}
+
 func Test_Shutdown_WaitsForActiveHandler(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})

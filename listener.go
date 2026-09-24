@@ -256,9 +256,18 @@ func (l *listener) Listen(consumerContext context.Context) error {
 
 	// When a session is over, make consumer join a new session, as long as the context is not cancelled
 	for {
+		if l.isStopping() {
+			slog.Info("listener stopping (shutdown)", logFieldName("consumerGroup", "consumer_group"), l.groupID)
+			return nil
+		}
+
 		// Consume make this consumer join the next session
 		// This block until the `session` is over. (basically until next rebalance)
 		err := l.consumerGroup.Consume(consumerContext, l.topics, l)
+		if l.isStopping() {
+			slog.Info("listener stopping (shutdown)", logFieldName("consumerGroup", "consumer_group"), l.groupID)
+			return nil
+		}
 		if err != nil {
 			slog.Error("consumer group consume error", "error", err, logFieldName("consumerGroup", "consumer_group"), l.groupID)
 
@@ -272,6 +281,21 @@ func (l *listener) Listen(consumerContext context.Context) error {
 			return err
 		}
 		slog.Debug("consumer group session ended, rejoining", logFieldName("consumerGroup", "consumer_group"), l.groupID)
+	}
+}
+
+func (l *listener) isStopping() bool {
+	l.processingMu.Lock()
+	paused := l.paused
+	l.processingMu.Unlock()
+	if paused {
+		return true
+	}
+	select {
+	case <-l.done:
+		return true
+	default:
+		return false
 	}
 }
 
