@@ -58,12 +58,18 @@ type listener struct {
 	logContextStorer   LogContextStorer
 	done               chan struct{}
 	closeOnce          sync.Once
+	processingMu       sync.Mutex
+	paused             bool
+	processing         int
+	drained            chan struct{}
 }
 
 // Listener is able to listen multiple topics with one handler by topic
 type Listener interface {
 	Listen(ctx context.Context) error
+	// Deprecated: Use Shutdown to drain active handlers before closing resources.
 	Close()
+	Shutdown(ctx context.Context) error
 	GroupID() string
 }
 
@@ -269,26 +275,56 @@ func (l *listener) Listen(consumerContext context.Context) error {
 	}
 }
 
-// Close shuts down the listener, its consumer group, and the internal error-draining goroutine.
-// Close must be called to avoid goroutine leaks.
+// pauseAll stops new messages from entering handlers and suspends future fetches.
+// Messages already fetched but not processed remain unmarked for redelivery.
+func (l *listener) pauseAll() {
+	l.processingMu.Lock()
+	l.paused = true
+	l.processingMu.Unlock()
+	if l.consumerGroup != nil {
+		l.consumerGroup.PauseAll()
+	}
+}
+
+// Shutdown waits for active handlers to finish before closing the consumer group
+// and producer. If ctx expires while waiting for handlers, it closes the
+// resources and returns ctx.Err().
+// Sarama's Close may still block after the deadline while releasing a session.
+func (l *listener) Shutdown(ctx context.Context) error {
+	l.pauseAll()
+	defer l.Close()
+	l.processingMu.Lock()
+	drained := l.drained
+	l.processingMu.Unlock()
+	if drained != nil {
+		select {
+		case <-drained:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return ctx.Err()
+}
+
+// Close closes the listener without first draining active handlers.
+// Deprecated: Use Shutdown to drain active handlers before closing resources.
 func (l *listener) Close() {
 	l.closeOnce.Do(func() {
 		if l.done != nil {
 			close(l.done)
 		}
-	})
-	if l.deadletterProducer != nil {
-		l.deadletterProducer.Close()
-	}
-
-	if l.consumerGroup != nil {
-		err := l.consumerGroup.Close()
-		if err != nil {
-			slog.Error("failed to close consumer group", "error", err, logFieldName("consumerGroup", "consumer_group"), l.groupID)
-		} else {
-			slog.Debug("consumer group closed", logFieldName("consumerGroup", "consumer_group"), l.groupID)
+		if l.consumerGroup != nil {
+			err := l.consumerGroup.Close()
+			if err != nil {
+				slog.Error("failed to close consumer group", "error", err, logFieldName("consumerGroup", "consumer_group"), l.groupID)
+			} else {
+				slog.Debug("consumer group closed", logFieldName("consumerGroup", "consumer_group"), l.groupID)
+			}
 		}
-	}
+		if l.deadletterProducer != nil {
+			l.deadletterProducer.Close()
+		}
+	})
 }
 
 // The `Setup`, `Cleanup` and `ConsumeClaim` are actually implementation of ConsumerGroupHandler from sarama
@@ -334,7 +370,11 @@ func (l *listener) ConsumeClaim(session sarama.ConsumerGroupSession, claim saram
 	)
 
 	for msg := range claim.Messages() {
+		if !l.beginProcessing() {
+			continue
+		}
 		l.onNewMessage(msg, session)
+		l.endProcessing()
 	}
 
 	slog.Debug("stopped consuming partition",
@@ -344,6 +384,29 @@ func (l *listener) ConsumeClaim(session sarama.ConsumerGroupSession, claim saram
 	)
 
 	return nil
+}
+
+func (l *listener) beginProcessing() bool {
+	l.processingMu.Lock()
+	defer l.processingMu.Unlock()
+	if l.paused {
+		return false
+	}
+	if l.processing == 0 {
+		l.drained = make(chan struct{})
+	}
+	l.processing++
+	return true
+}
+
+func (l *listener) endProcessing() {
+	l.processingMu.Lock()
+	defer l.processingMu.Unlock()
+	l.processing--
+	if l.processing == 0 {
+		close(l.drained)
+		l.drained = nil
+	}
 }
 
 // onNewMessage processes a new message.
