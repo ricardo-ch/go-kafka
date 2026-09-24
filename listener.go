@@ -316,6 +316,7 @@ func (l *listener) pauseAll() {
 // Sarama's Close may still block after the deadline while releasing a session.
 func (l *listener) Shutdown(ctx context.Context) error {
 	l.pauseAll()
+	slog.Debug("listener pausing all", logFieldName("consumerGroup", "consumer_group"), l.groupID)
 	defer l.Close()
 	l.processingMu.Lock()
 	drained := l.drained
@@ -323,6 +324,7 @@ func (l *listener) Shutdown(ctx context.Context) error {
 	if drained != nil {
 		select {
 		case <-drained:
+			slog.Debug("listener drained", logFieldName("consumerGroup", "consumer_group"), l.groupID)
 		case <-ctx.Done():
 			return ctx.Err()
 		}
