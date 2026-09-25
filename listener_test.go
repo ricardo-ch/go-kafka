@@ -898,6 +898,103 @@ func Test_Listen_ContextCanceled(t *testing.T) {
 	consumerGroup.AssertExpectations(t)
 }
 
+func Test_Listen_ShutdownDoesNotRejoinClosedGroup(t *testing.T) {
+	consumeStarted := make(chan struct{})
+	sessionEnded := make(chan struct{})
+	consumerGroup := &mocks.ConsumerGroup{}
+	consumerGroup.On("Consume", mock.Anything, mock.Anything, mock.Anything).
+		Run(func(mock.Arguments) {
+			close(consumeStarted)
+			<-sessionEnded
+		}).Return(nil).Once()
+	consumerGroup.On("PauseAll").Run(func(mock.Arguments) { close(sessionEnded) }).Return().Once()
+	consumerGroup.On("Close").Return(nil).Once()
+
+	l := &listener{consumerGroup: consumerGroup}
+	listenDone := make(chan error, 1)
+	go func() { listenDone <- l.Listen(context.Background()) }()
+	<-consumeStarted
+
+	assert.NoError(t, l.Shutdown(context.Background()))
+	assert.NoError(t, <-listenDone)
+	consumerGroup.AssertExpectations(t)
+}
+
+func Test_Shutdown_WaitsForActiveHandler(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	message := &sarama.ConsumerMessage{Topic: "topic-test"}
+	msgs := make(chan *sarama.ConsumerMessage, 2)
+	msgs <- message
+	msgs <- &sarama.ConsumerMessage{Topic: "topic-test"}
+	close(msgs)
+
+	claim := &mocks.ConsumerGroupClaim{}
+	setupConsumerGroupClaimMock(claim, "topic-test", 0, msgs)
+	session := &mocks.ConsumerGroupSession{}
+	session.On("Context").Return(context.Background())
+	session.On("MarkMessage", message, "").Return()
+
+	group := &mocks.ConsumerGroup{}
+	paused := make(chan struct{})
+	group.On("PauseAll").Run(func(mock.Arguments) { close(paused) }).Return().Once()
+	group.On("Close").Run(func(mock.Arguments) {
+		select {
+		case <-release:
+		default:
+			t.Error("consumer group closed before handler finished")
+		}
+	}).Return(nil).Once()
+
+	processed := 0
+	l := &listener{
+		consumerGroup: group,
+		handlers: Handlers{"topic-test": {
+			Processor: func(context.Context, *sarama.ConsumerMessage) error {
+				processed++
+				close(started)
+				<-release
+				return nil
+			},
+			Config: testHandlerConfig,
+		}},
+	}
+	claimDone := make(chan struct{})
+	go func() {
+		defer close(claimDone)
+		_ = l.ConsumeClaim(session, claim)
+	}()
+	<-started
+
+	shutdownDone := make(chan error, 1)
+	go func() { shutdownDone <- l.Shutdown(context.Background()) }()
+	<-paused
+	select {
+	case <-shutdownDone:
+		t.Fatal("shutdown returned while handler was active")
+	default:
+	}
+	close(release)
+	<-claimDone
+	assert.NoError(t, <-shutdownDone)
+	assert.Equal(t, 1, processed)
+	group.AssertExpectations(t)
+	session.AssertExpectations(t)
+}
+
+func Test_Shutdown_DeadlineClosesResources(t *testing.T) {
+	group := &mocks.ConsumerGroup{}
+	group.On("PauseAll").Return().Once()
+	group.On("Close").Return(nil).Once()
+	l := &listener{consumerGroup: group}
+	assert.True(t, l.beginProcessing())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	assert.ErrorIs(t, l.Shutdown(ctx), context.Canceled)
+	l.endProcessing()
+	group.AssertExpectations(t)
+}
+
 func Test_getBackoffDuration(t *testing.T) {
 	// getBackoffDuration uses sarama.NewExponentialBackoff which implements KIP-580 with jitter
 	// So we test that the backoff is within a reasonable range
