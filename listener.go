@@ -301,13 +301,18 @@ func (l *listener) isStopping() bool {
 
 // pauseAll stops new messages from entering handlers and suspends future fetches.
 // Messages already fetched but not processed remain unmarked for redelivery.
-func (l *listener) pauseAll() {
+func (l *listener) pauseAll() <-chan struct{} {
 	l.processingMu.Lock()
 	l.paused = true
+	if l.processing > 0 && l.drained == nil {
+		l.drained = make(chan struct{})
+	}
+	drained := l.drained
 	l.processingMu.Unlock()
 	if l.consumerGroup != nil {
 		l.consumerGroup.PauseAll()
 	}
+	return drained
 }
 
 // Shutdown waits for active handlers to finish before closing the consumer group
@@ -315,12 +320,9 @@ func (l *listener) pauseAll() {
 // resources and returns ctx.Err().
 // Sarama's Close may still block after the deadline while releasing a session.
 func (l *listener) Shutdown(ctx context.Context) error {
-	l.pauseAll()
+	drained := l.pauseAll()
 	slog.Debug("listener pausing all", logFieldName("consumerGroup", "consumer_group"), l.groupID)
 	defer l.Close()
-	l.processingMu.Lock()
-	drained := l.drained
-	l.processingMu.Unlock()
 	if drained != nil {
 		select {
 		case <-drained:
@@ -418,9 +420,6 @@ func (l *listener) beginProcessing() bool {
 	if l.paused {
 		return false
 	}
-	if l.processing == 0 {
-		l.drained = make(chan struct{})
-	}
 	l.processing++
 	return true
 }
@@ -429,7 +428,7 @@ func (l *listener) endProcessing() {
 	l.processingMu.Lock()
 	defer l.processingMu.Unlock()
 	l.processing--
-	if l.processing == 0 {
+	if l.processing == 0 && l.drained != nil {
 		close(l.drained)
 		l.drained = nil
 	}
