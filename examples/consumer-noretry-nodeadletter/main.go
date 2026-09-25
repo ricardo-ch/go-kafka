@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/ricardo-ch/go-kafka/v4"
 )
@@ -29,7 +30,13 @@ func main() {
 	if err != nil {
 		fmt.Printf("could not initialise listener: %v\n", err)
 	}
-	defer listener.Close()
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := listener.Shutdown(shutdownCtx); err != nil {
+			fmt.Printf("listener shutdown: %v\n", err)
+		}
+	}()
 
 	err = listener.Listen(context.Background())
 	if err != nil {

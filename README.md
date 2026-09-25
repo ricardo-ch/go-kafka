@@ -26,10 +26,32 @@ handlers := map[string]kafka.Handler{
 
 kafka.Brokers = []string{"localhost:9092"}
 listener, _ := kafka.NewListener("my-consumer-group", handlers)
-defer listener.Close()
 
 errc <- listener.Listen(ctx)
 ```
+
+### Graceful shutdown
+
+Keep the context passed to `Listen` active while shutting down. `Shutdown` pauses
+consumption, waits for handlers already running to finish, then closes the consumer
+group and the internal producer. Messages fetched but not started are left unmarked
+and can be consumed again after a restart. Use a separate timeout context for the
+shutdown:
+
+```go
+shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+defer cancel()
+if err := listener.Shutdown(shutdownCtx); err != nil {
+    slog.Warn("listener shutdown exceeded its grace period", "error", err)
+}
+```
+
+If the grace period expires while waiting for handlers, `Shutdown` still calls
+`Close` and returns the context error. `Close` is deprecated for normal shutdown
+because it does not first drain active handlers. The grace period must allow enough
+time for handlers to finish and for Sarama to commit offsets before the consumer
+group's rebalance timeout. The timeout bounds the wait for handlers; Sarama's final
+close can still take additional time while it releases claims and commits offsets.
 
 Simple producer
 ```go
@@ -243,7 +265,7 @@ listener, _ := kafka.NewListener("my-consumer-group", handlers,
     kafka.WithInstrumenting(),
     kafka.WithTracing(kafka.DefaultTracing),
 )
-defer listener.Close()
+// Call listener.Shutdown(shutdownCtx) when stopping; see Graceful shutdown.
 
 go func() {
     mux := http.NewServeMux()
@@ -322,15 +344,22 @@ The `LogContextStorer` is agnostic — provide your own `ToContext`/`FromContext
 
 ## Resource cleanup
 
-`Close()` must be called to avoid goroutine leaks. It is **idempotent** (safe for multiple calls) and releases all resources:
+Call `Shutdown(ctx)` to drain active handlers and release resources. It:
 - Closes the internal error-draining goroutine
-- Closes the internal deadletter producer
 - Closes the consumer group
+- Closes the internal deadletter producer
 
 ```go
 listener, _ := kafka.NewListener("my-group", handlers)
-defer listener.Close()
+defer func() {
+    shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()
+    _ = listener.Shutdown(shutdownCtx)
+}()
 ```
+
+`Close()` remains available for direct cleanup but is deprecated. It does not
+first wait for active handlers to finish.
 
 ## Default configuration
 
