@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"log/slog"
+	"time"
 
 	"github.com/ricardo-ch/go-kafka/v4"
 )
@@ -27,11 +28,18 @@ func main() {
 	if err != nil {
 		log.Fatalln("could not initialise listener:", err)
 	}
-	defer listener.Close()
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := listener.Shutdown(shutdownCtx); err != nil {
+			slog.Warn("listener shutdown", "error", err)
+		}
+	}()
 
 	err = listener.Listen(context.Background())
 	if err != nil {
-		log.Fatalln("listener closed with error:", err)
+		log.Println("listener closed with error:", err)
+		return
 	}
 	log.Println("listener stopped")
 }
