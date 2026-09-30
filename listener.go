@@ -94,7 +94,7 @@ func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (
 		return nil, err
 	}
 
-	producer, err := NewProducer(WithDeadletterProducerInstrumenting())
+	producer, err := NewProducer()
 	if err != nil {
 		return nil, err
 	}
@@ -442,6 +442,7 @@ func (l *listener) onNewMessage(msg *sarama.ConsumerMessage, session sarama.Cons
 	ctx, endSpan := l.startMessageSpan(ctx, msg)
 	defer endSpan()
 
+	l.incConsumedCounter(msg)
 	result := l.processMessage(ctx, msg)
 
 	if level, ok := logLevelForProcessingOutcome(result.err); ok {
@@ -482,6 +483,13 @@ func (l *listener) enrichContext(ctx context.Context, msg *sarama.ConsumerMessag
 // processMessage handles the full lifecycle of a single message: retry loop, error
 // classification, metrics, and forwarding to retry/deadletter topics.
 func (l *listener) processMessage(ctx context.Context, msg *sarama.ConsumerMessage) processingResult {
+	begin := time.Now()
+	defer func() {
+		if l.instrumenting != nil {
+			l.instrumenting.observeProcessingLatency(msg, begin)
+		}
+	}()
+
 	handler := l.handlers[msg.Topic]
 
 	err := l.handleMessageWithRetry(ctx, handler, msg, *handler.Config.ConsumerMaxRetries, handler.Config.ExponentialBackoff)
@@ -580,6 +588,7 @@ func (l *listener) forwardWithRetry(ctx context.Context, msg *sarama.ConsumerMes
 	for {
 		err := l.forwardToTopic(ctx, msg, topicName)
 		if err == nil {
+			l.incForwardedCounter(msg, kind)
 			if attempt > 0 {
 				loggerFromContext(ctx).Debug("message forwarded to "+kind+" topic after retry", logForwardTopicField(kind), topicName, "attempts", attempt+1)
 			}
@@ -588,6 +597,7 @@ func (l *listener) forwardWithRetry(ctx context.Context, msg *sarama.ConsumerMes
 		}
 
 		attempt++
+		l.incForwardRetryCounter(msg, kind)
 		loggerFromContext(ctx).Error("failed to forward message to "+kind+" topic, will retry",
 			"error", err, logForwardTopicField(kind), topicName, "attempt", attempt, "backoff", backoff.String())
 
@@ -603,6 +613,34 @@ func (l *listener) forwardWithRetry(ctx context.Context, msg *sarama.ConsumerMes
 		}
 
 		backoff = min(backoff*2, ForwardMaxBackoffDuration)
+	}
+}
+
+// incConsumedCounter increments the received record counter if necessary.
+func (l *listener) incConsumedCounter(msg *sarama.ConsumerMessage) {
+	if l.instrumenting != nil && l.instrumenting.recordConsumedCounter != nil {
+		l.instrumenting.recordConsumedCounter.WithLabelValues(msg.Topic, l.groupID).Inc()
+	}
+}
+
+// incRetryCounter increments the handler retry counter if necessary.
+func (l *listener) incRetryCounter(msg *sarama.ConsumerMessage) {
+	if l.instrumenting != nil && l.instrumenting.recordRetryCounter != nil {
+		l.instrumenting.recordRetryCounter.WithLabelValues(msg.Topic, l.groupID).Inc()
+	}
+}
+
+// incForwardedCounter increments the successful forwarding counter if necessary.
+func (l *listener) incForwardedCounter(msg *sarama.ConsumerMessage, kind string) {
+	if l.instrumenting != nil && l.instrumenting.recordForwardedCounter != nil {
+		l.instrumenting.recordForwardedCounter.WithLabelValues(msg.Topic, l.groupID, kind).Inc()
+	}
+}
+
+// incForwardRetryCounter increments the failed forwarding retry counter if necessary.
+func (l *listener) incForwardRetryCounter(msg *sarama.ConsumerMessage, kind string) {
+	if l.instrumenting != nil && l.instrumenting.recordForwardRetryCounter != nil {
+		l.instrumenting.recordForwardRetryCounter.WithLabelValues(msg.Topic, l.groupID, kind).Inc()
 	}
 }
 
@@ -690,6 +728,7 @@ func (l *listener) handleMessageWithRetry(ctx context.Context, handler Handler, 
 		}
 
 		retryNumber++
+		l.incRetryCounter(msg)
 
 		loggerFromContext(ctx).Error("message processing failed, will retry",
 			"error", err,

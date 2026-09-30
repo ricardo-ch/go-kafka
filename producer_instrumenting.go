@@ -53,7 +53,7 @@ func getProducerDeadletterSendCounter() *prometheus.CounterVec {
 				Namespace: "kafka",
 				Subsystem: "producer",
 				Name:      "dead_letter_created_total",
-				Help:      "Number of dead letters created",
+				Help:      "Deprecated: use kafka_consumer_record_forwarded_total{type=\"deadletter\"}",
 			}, producerMetricsLabel)
 		prometheus.MustRegister(producerDeadletterSendCounter)
 	})
