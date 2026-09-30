@@ -249,13 +249,18 @@ To tune the forward retry cap:
 kafka.ForwardMaxBackoffDuration = 1 * time.Minute
 ```
 
-## Resource Cleanup (`Close`)
+## Resource Cleanup (`Shutdown`)
+
+Use `listener.Shutdown(ctx)` for graceful cleanup. It pauses consumption, waits
+for active handlers until the context expires, and closes the consumer group and
+internal producer even when the wait times out. Sarama's final close can take
+longer than the context deadline. `Close()` remains available but is deprecated.
 
 `Close()` has been improved in v4:
 - **Idempotent**: safe for multiple calls (protected by `sync.Once`), no more panic on double close
 - **Full cleanup**: now properly closes the internal deadletter producer in addition to the consumer group and error-draining goroutine
 
-In v3, calling `Close()` twice would panic, and the internal deadletter producer was never closed (resource leak). No code change is required — just be aware that `Close()` now releases all resources.
+In v3, calling `Close()` twice would panic, and the internal deadletter producer was never closed (resource leak). Existing calls still compile, but should be replaced with `Shutdown(ctx)` for normal shutdown.
 
 ## Topic Collision Detection
 
@@ -288,4 +293,5 @@ This is a safety check at creation time — no code change required unless you h
 - [ ] Review `ExponentialBackoffFunc` — now lazy, remove explicit initialization if using defaults
 - [ ] Verify no retry/deadletter topic collides with a consumed topic (`ErrRetryTopicCollision` / `ErrDeadletterTopicCollision`)
 - [ ] Remove workarounds for double `Close()` calls — now idempotent
+- [ ] Replace listener `Close()` calls with `Shutdown(ctx)` for graceful cleanup
 - [ ] Run tests to verify compatibility
