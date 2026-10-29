@@ -64,6 +64,17 @@ func setupConsumerGroupClaimMock(claim *mocks.ConsumerGroupClaim, topic string, 
 	claim.On("InitialOffset").Return(int64(0))
 }
 
+// mockAPIVersions advertises the APIs NewListener needs. The default mock only
+// lists Produce and Fetch, so Metadata is rejected as unsupported.
+func mockAPIVersions(t *testing.T) sarama.MockResponse {
+	t.Helper()
+
+	return sarama.NewMockApiVersionsResponse(t).SetApiKeys([]sarama.ApiVersionsResponseKey{
+		{ApiKey: 3, MinVersion: 0, MaxVersion: 8},  // Metadata
+		{ApiKey: 10, MinVersion: 0, MaxVersion: 2}, // FindCoordinator
+	})
+}
+
 func counterValue(t *testing.T, metric interface{ Write(*dto.Metric) error }) float64 {
 	t.Helper()
 
@@ -131,7 +142,7 @@ func Test_NewListener_Should_Return_Error_When_Initial_Topic_Equals_Retry_Topic(
 	fc := sarama.NewMockFindCoordinatorResponse(t).
 		SetCoordinator(sarama.CoordinatorGroup, "groupID", leaderBroker)
 	leaderBroker.SetHandlerByMap(map[string]sarama.MockResponse{
-		"ApiVersionsRequest":     sarama.NewMockApiVersionsResponse(t),
+		"ApiVersionsRequest":     mockAPIVersions(t),
 		"MetadataRequest":        md,
 		"FindCoordinatorRequest": fc,
 	})
@@ -156,7 +167,7 @@ func Test_NewListener_Should_Return_Error_When_Initial_Topic_Equals_Deadletter_T
 	fc := sarama.NewMockFindCoordinatorResponse(t).
 		SetCoordinator(sarama.CoordinatorGroup, "groupID", leaderBroker)
 	leaderBroker.SetHandlerByMap(map[string]sarama.MockResponse{
-		"ApiVersionsRequest":     sarama.NewMockApiVersionsResponse(t),
+		"ApiVersionsRequest":     mockAPIVersions(t),
 		"MetadataRequest":        md,
 		"FindCoordinatorRequest": fc,
 	})
@@ -181,7 +192,7 @@ func Test_NewListener_Happy_Path(t *testing.T) {
 	fc := sarama.NewMockFindCoordinatorResponse(t).
 		SetCoordinator(sarama.CoordinatorGroup, "groupID", leaderBroker)
 	leaderBroker.SetHandlerByMap(map[string]sarama.MockResponse{
-		"ApiVersionsRequest":     sarama.NewMockApiVersionsResponse(t),
+		"ApiVersionsRequest":     mockAPIVersions(t),
 		"MetadataRequest":        md,
 		"FindCoordinatorRequest": fc,
 	})
