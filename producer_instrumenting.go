@@ -53,7 +53,7 @@ func getProducerDeadletterSendCounter() *prometheus.CounterVec {
 				Namespace: "kafka",
 				Subsystem: "producer",
 				Name:      "dead_letter_created_total",
-				Help:      "Deprecated: use kafka_consumer_record_forwarded_total{type=\"deadletter\"}",
+				Help:      "Deprecated: counts successful retry and deadletter publications; use kafka_consumer_record_forwarded_total with the type label instead",
 			}, producerMetricsLabel)
 		prometheus.MustRegister(producerDeadletterSendCounter)
 	})

@@ -94,7 +94,8 @@ func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (
 		return nil, err
 	}
 
-	producer, err := NewProducer()
+	// Keep the deprecated forwarding metric available while existing dashboards migrate.
+	producer, err := NewProducer(WithDeadletterProducerInstrumenting())
 	if err != nil {
 		return nil, err
 	}

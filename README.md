@@ -246,7 +246,10 @@ If global forwarding is disabled but a handler has a custom retry/deadletter top
 Metrics for the listener and the producer can be exported to Prometheus.
 The listener's retry and deadletter forwarding metrics are emitted when it is configured with `WithInstrumenting()`.
 `kafka_producer_dead_letter_created_total` and `WithDeadletterProducerInstrumenting()` are deprecated.
-Use `kafka_consumer_record_forwarded_total{type="deadletter"}` with `WithInstrumenting()` on the listener; it distinguishes deadletter forwarding from retry-topic forwarding.
+The listener continues to emit this legacy counter for compatibility, even without `WithInstrumenting()`.
+It retains its historical behavior: it counts successful publications to both retry and deadletter topics, labeled by the destination `kafka_topic`.
+Use `kafka_consumer_record_forwarded_total{type="retry"}` or `kafka_consumer_record_forwarded_total{type="deadletter"}` with `WithInstrumenting()` on the listener to distinguish the destinations. The new counter is labeled by the source topic and consumer group.
+Migrate dashboards and alerts before the legacy counter is removed in a future release.
 
 | Metric name | Labels | Description |
 |-------------|--------|-------------|
@@ -261,7 +264,7 @@ Use `kafka_consumer_record_forwarded_total{type="deadletter"}` with `WithInstrum
 | `kafka_consumergroup_current_message_timestamp` | `kafka_topic`, `consumer_group`, `partition`, `type` | Timestamp of the current message (`LogAppendTime` or `CreateTime`) |
 | `kafka_producer_record_send_total` | `kafka_topic` | Number of messages sent |
 | `kafka_producer_record_send_latency_seconds` | `kafka_topic` | Latency of sending a message |
-| `kafka_producer_dead_letter_created_total` | `kafka_topic` | **Deprecated.** Use `kafka_consumer_record_forwarded_total{type="deadletter"}` instead |
+| `kafka_producer_dead_letter_created_total` | `kafka_topic` (destination) | **Deprecated.** Successful retry and deadletter publications; use `kafka_consumer_record_forwarded_total{type="retry"}` or `{type="deadletter"}` instead |
 | `kafka_producer_record_error_total` | `kafka_topic` | Number of send errors |
 
 ### Enabling metrics and tracing

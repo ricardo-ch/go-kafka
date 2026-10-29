@@ -189,11 +189,14 @@ func Test_NewListener_Happy_Path(t *testing.T) {
 	Brokers = []string{leaderBroker.Addr()}
 
 	handlers := map[string]Handler{"topic-test": testHandler}
-	listener, err := NewListener("groupID", handlers)
+	l, err := NewListener("groupID", handlers)
 
 	assert.NoError(t, err)
-	assert.NotNil(t, listener)
-	assert.Equal(t, "groupID", listener.GroupID())
+	assert.NotNil(t, l)
+	assert.Equal(t, "groupID", l.GroupID())
+	internalProducer := l.(*listener).deadletterProducer.(*producer)
+	assert.NotNil(t, internalProducer.instrumenting)
+	assert.NotNil(t, internalProducer.instrumenting.deadletterRecordSendCounter)
 }
 
 func Test_ConsumeClaim_Happy_Path(t *testing.T) {
@@ -539,23 +542,32 @@ func Test_forwardWithRetry_RecordsForwardingMetrics(t *testing.T) {
 	saveGlobals(t)
 	DurationBeforeRetry = time.Millisecond
 
-	producer := &mocks.MockProducer{}
-	producer.On("Produce", mock.Anything, mock.Anything).Return(errors.New("producer unavailable")).Once()
-	producer.On("Produce", mock.Anything, mock.Anything).Return(nil)
+	syncProducer := &mocks.SyncProducer{}
+	syncProducer.On("SendMessage", mock.Anything).Return(int32(0), int64(0), errors.New("producer unavailable")).Once()
+	syncProducer.On("SendMessage", mock.Anything).Return(int32(0), int64(0), nil).Twice()
+	p := &producer{producer: syncProducer, handler: produce}
+	WithDeadletterProducerInstrumenting()(p)
+	retryCounter := p.instrumenting.deadletterRecordSendCounter.WithLabelValues("legacy-retry-topic")
+	deadletterCounter := p.instrumenting.deadletterRecordSendCounter.WithLabelValues("legacy-deadletter-topic")
+	retryBefore := counterValue(t, retryCounter)
+	deadletterBefore := counterValue(t, deadletterCounter)
 
 	l := listener{
 		groupID:            "forwarding-metrics-group",
-		deadletterProducer: producer,
+		deadletterProducer: p,
 		instrumenting:      NewConsumerMetricsService("forwarding-metrics-group"),
 	}
 	msg := &sarama.ConsumerMessage{Topic: "source-topic"}
 
-	assert.NoError(t, l.forwardWithRetry(context.Background(), msg, "retry-topic", "retry"))
+	assert.NoError(t, l.forwardWithRetry(context.Background(), msg, "legacy-retry-topic", "retry"))
+	assert.Equal(t, retryBefore+1, counterValue(t, retryCounter))
+	assert.Equal(t, deadletterBefore, counterValue(t, deadletterCounter))
 	assert.Equal(t, float64(1), counterValue(t, l.instrumenting.recordForwardedCounter.WithLabelValues("source-topic", "forwarding-metrics-group", "retry")))
 	assert.Equal(t, float64(1), counterValue(t, l.instrumenting.recordForwardRetryCounter.WithLabelValues("source-topic", "forwarding-metrics-group", "retry")))
-	assert.NoError(t, l.forwardWithRetry(context.Background(), msg, "deadletter-topic", "deadletter"))
+	assert.NoError(t, l.forwardWithRetry(context.Background(), msg, "legacy-deadletter-topic", "deadletter"))
+	assert.Equal(t, deadletterBefore+1, counterValue(t, deadletterCounter))
 	assert.Equal(t, float64(1), counterValue(t, l.instrumenting.recordForwardedCounter.WithLabelValues("source-topic", "forwarding-metrics-group", "deadletter")))
-	producer.AssertExpectations(t)
+	syncProducer.AssertExpectations(t)
 }
 
 func Test_processMessage_RecordsRetriesAndOneLifecycleLatencySample(t *testing.T) {
