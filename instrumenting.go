@@ -16,33 +16,43 @@ const (
 )
 
 var (
-	consumerRecordConsumedCounter *prometheus.CounterVec
-	consumerRecordConsumedLatency *prometheus.HistogramVec
-	consumerRecordErrorCounter    *prometheus.CounterVec
-	consumerRecordOmittedCounter  *prometheus.CounterVec
-	consumerRecordDroppedCounter  *prometheus.CounterVec
+	consumerRecordConsumedCounter     *prometheus.CounterVec
+	consumerRecordConsumedLatency     *prometheus.HistogramVec
+	consumerRecordErrorCounter        *prometheus.CounterVec
+	consumerRecordOmittedCounter      *prometheus.CounterVec
+	consumerRecordDroppedCounter      *prometheus.CounterVec
+	consumerRecordRetryCounter        *prometheus.CounterVec
+	consumerRecordForwardedCounter    *prometheus.CounterVec
+	consumerRecordForwardRetryCounter *prometheus.CounterVec
 
 	consumergroupCurrentMessageTimestamp *prometheus.GaugeVec
 
-	consumerMetricLabels = []string{"kafka_topic", "consumer_group"}
+	consumerMetricLabels        = []string{"kafka_topic", "consumer_group"}
+	consumerForwardMetricLabels = []string{"kafka_topic", "consumer_group", "type"}
 
-	consumerConsumedOnce  sync.Once
-	consumerLatencyOnce   sync.Once
-	consumerErrorOnce     sync.Once
-	consumerOmittedOnce   sync.Once
-	consumerDroppedOnce   sync.Once
-	consumerTimestampOnce sync.Once
+	consumerConsumedOnce     sync.Once
+	consumerLatencyOnce      sync.Once
+	consumerErrorOnce        sync.Once
+	consumerOmittedOnce      sync.Once
+	consumerDroppedOnce      sync.Once
+	consumerRetryOnce        sync.Once
+	consumerForwardedOnce    sync.Once
+	consumerForwardRetryOnce sync.Once
+	consumerTimestampOnce    sync.Once
 )
 
 // ConsumerMetricsService object represents consumer metrics
 type ConsumerMetricsService struct {
 	groupID string
 
-	recordConsumedCounter *prometheus.CounterVec
-	recordConsumedLatency *prometheus.HistogramVec
-	recordErrorCounter    *prometheus.CounterVec
-	recordOmittedCounter  *prometheus.CounterVec
-	recordDroppedCounter  *prometheus.CounterVec
+	recordConsumedCounter     *prometheus.CounterVec
+	recordConsumedLatency     *prometheus.HistogramVec
+	recordErrorCounter        *prometheus.CounterVec
+	recordOmittedCounter      *prometheus.CounterVec
+	recordDroppedCounter      *prometheus.CounterVec
+	recordRetryCounter        *prometheus.CounterVec
+	recordForwardedCounter    *prometheus.CounterVec
+	recordForwardRetryCounter *prometheus.CounterVec
 
 	currentMessageTimestamp *prometheus.GaugeVec
 }
@@ -84,7 +94,7 @@ func getConsumerRecordErrorCounter() *prometheus.CounterVec {
 				Namespace: "kafka",
 				Subsystem: "consumer",
 				Name:      "record_error_total",
-				Help:      "Number of records that failed processing",
+				Help:      "Number of non-omitted records whose processing ended with an error",
 			}, consumerMetricLabels)
 		prometheus.MustRegister(consumerRecordErrorCounter)
 	})
@@ -122,6 +132,51 @@ func getConsumerRecordDroppedCounter() *prometheus.CounterVec {
 	return consumerRecordDroppedCounter
 }
 
+func getConsumerRecordRetryCounter() *prometheus.CounterVec {
+	consumerRetryOnce.Do(func() {
+		consumerRecordRetryCounter = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "kafka",
+				Subsystem: "consumer",
+				Name:      "record_retry_total",
+				Help:      "Number of handler retry attempts",
+			}, consumerMetricLabels)
+		prometheus.MustRegister(consumerRecordRetryCounter)
+	})
+
+	return consumerRecordRetryCounter
+}
+
+func getConsumerRecordForwardedCounter() *prometheus.CounterVec {
+	consumerForwardedOnce.Do(func() {
+		consumerRecordForwardedCounter = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "kafka",
+				Subsystem: "consumer",
+				Name:      "record_forwarded_total",
+				Help:      "Number of records forwarded after processing failure",
+			}, consumerForwardMetricLabels)
+		prometheus.MustRegister(consumerRecordForwardedCounter)
+	})
+
+	return consumerRecordForwardedCounter
+}
+
+func getConsumerRecordForwardRetryCounter() *prometheus.CounterVec {
+	consumerForwardRetryOnce.Do(func() {
+		consumerRecordForwardRetryCounter = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "kafka",
+				Subsystem: "consumer",
+				Name:      "record_forward_retry_total",
+				Help:      "Number of retries after a failed forward",
+			}, consumerForwardMetricLabels)
+		prometheus.MustRegister(consumerRecordForwardRetryCounter)
+	})
+
+	return consumerRecordForwardRetryCounter
+}
+
 func getConsumerCurrentMessageTimestamp() *prometheus.GaugeVec {
 	consumerTimestampOnce.Do(func() {
 		consumergroupCurrentMessageTimestamp = prometheus.NewGaugeVec(
@@ -140,13 +195,16 @@ func getConsumerCurrentMessageTimestamp() *prometheus.GaugeVec {
 // NewConsumerMetricsService creates a layer of service that add metrics capability
 func NewConsumerMetricsService(groupID string) *ConsumerMetricsService {
 	return &ConsumerMetricsService{
-		groupID:                 groupID,
-		recordConsumedCounter:   getConsumerRecordConsumedCounter(),
-		recordConsumedLatency:   getConsumerRecordConsumedLatency(),
-		recordErrorCounter:      getConsumerRecordErrorCounter(),
-		recordOmittedCounter:    getConsumerRecordOmittedCounter(),
-		recordDroppedCounter:    getConsumerRecordDroppedCounter(),
-		currentMessageTimestamp: getConsumerCurrentMessageTimestamp(),
+		groupID:                   groupID,
+		recordConsumedCounter:     getConsumerRecordConsumedCounter(),
+		recordConsumedLatency:     getConsumerRecordConsumedLatency(),
+		recordErrorCounter:        getConsumerRecordErrorCounter(),
+		recordOmittedCounter:      getConsumerRecordOmittedCounter(),
+		recordDroppedCounter:      getConsumerRecordDroppedCounter(),
+		recordRetryCounter:        getConsumerRecordRetryCounter(),
+		recordForwardedCounter:    getConsumerRecordForwardedCounter(),
+		recordForwardRetryCounter: getConsumerRecordForwardRetryCounter(),
+		currentMessageTimestamp:   getConsumerCurrentMessageTimestamp(),
 	}
 }
 
@@ -154,10 +212,6 @@ func NewConsumerMetricsService(groupID string) *ConsumerMetricsService {
 func (c *ConsumerMetricsService) Instrumentation(next Handler) Handler {
 	return Handler{
 		Processor: func(ctx context.Context, msg *sarama.ConsumerMessage) (err error) {
-			defer func(begin time.Time) {
-				c.recordConsumedLatency.WithLabelValues(msg.Topic, c.groupID).Observe(time.Since(begin).Seconds())
-			}(time.Now())
-
 			// If sarama sets the timestamp to the block timestamp, it means that the message was
 			// produced with the LogAppendTime timestamp type. Otherwise, it was produced with the
 			// CreateTime timestamp type.
@@ -170,13 +224,12 @@ func (c *ConsumerMetricsService) Instrumentation(next Handler) Handler {
 			}
 			c.currentMessageTimestamp.WithLabelValues(msg.Topic, c.groupID, strconv.FormatInt(int64(msg.Partition), 10), timestampType).Set(float64(msg.Timestamp.Unix()))
 
-			err = next.Processor(ctx, msg)
-			if err == nil {
-				c.recordConsumedCounter.WithLabelValues(msg.Topic, c.groupID).Inc()
-			}
-
-			return
+			return next.Processor(ctx, msg)
 		},
 		Config: next.Config,
 	}
+}
+
+func (c *ConsumerMetricsService) observeProcessingLatency(msg *sarama.ConsumerMessage, begin time.Time) {
+	c.recordConsumedLatency.WithLabelValues(msg.Topic, c.groupID).Observe(time.Since(begin).Seconds())
 }
