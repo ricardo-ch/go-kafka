@@ -22,7 +22,12 @@ func WithProducerInstrumenting() ProducerOption {
 	}
 }
 
-// WithDeadletterProducerInstrumenting adds the instrumenting layer on a deadletter producer.
+// WithDeadletterProducerInstrumenting adds the legacy instrumenting layer on a producer.
+// It counts every successful publication, including retry-topic publications, as a deadletter.
+//
+// Deprecated: use WithInstrumenting on the listener and monitor
+// kafka_consumer_record_forwarded_total{type="deadletter"} instead. It distinguishes
+// deadletter forwarding from retry-topic forwarding.
 func WithDeadletterProducerInstrumenting() ProducerOption {
 	return func(p *producer) {
 		p.instrumenting = NewDeadletterProducerMetricsService()
