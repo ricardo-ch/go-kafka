@@ -1054,6 +1054,69 @@ func Test_Listen_ContextCanceled(t *testing.T) {
 	consumerGroup.AssertExpectations(t)
 }
 
+func Test_Listen_RebalanceErrorRejoins(t *testing.T) {
+	previousDelay := consumeRejoinDelay
+	consumeRejoinDelay = 0
+	t.Cleanup(func() { consumeRejoinDelay = previousDelay })
+
+	secondConsume := make(chan struct{})
+	consumerGroup := &mocks.ConsumerGroup{}
+	consumerGroup.On("Consume", mock.Anything, mock.Anything, mock.Anything).
+		Return(sarama.ErrRebalanceInProgress).Once()
+	consumerGroup.On("Consume", mock.Anything, mock.Anything, mock.Anything).
+		Run(func(mock.Arguments) {
+			close(secondConsume)
+			time.Sleep(time.Hour)
+		}).
+		Return(nil)
+
+	tested := listener{consumerGroup: consumerGroup}
+	go func() {
+		_ = tested.Listen(context.Background())
+	}()
+
+	select {
+	case <-secondConsume:
+	case <-time.After(time.Second):
+		t.Fatal("listener did not rejoin after a rebalance error")
+	}
+	consumerGroup.AssertExpectations(t)
+}
+
+func Test_Listen_TimeoutGivesUp(t *testing.T) {
+	previousDelay := consumeRejoinDelay
+	consumeRejoinDelay = 0
+	t.Cleanup(func() { consumeRejoinDelay = previousDelay })
+
+	consumerGroup := &mocks.ConsumerGroup{}
+	consumerGroup.On("Consume", mock.Anything, mock.Anything, mock.Anything).
+		Return(timeoutError{}).Times(maxConsumeTimeouts)
+
+	tested := listener{consumerGroup: consumerGroup}
+	err := tested.Listen(context.Background())
+
+	assert.ErrorIs(t, err, timeoutError{})
+	consumerGroup.AssertExpectations(t)
+}
+
+func Test_Listen_ClosedGroupDoesNotRejoin(t *testing.T) {
+	consumerGroup := &mocks.ConsumerGroup{}
+	consumerGroup.On("Consume", mock.Anything, mock.Anything, mock.Anything).
+		Return(sarama.ErrClosedConsumerGroup).Once()
+
+	tested := listener{consumerGroup: consumerGroup}
+	err := tested.Listen(context.Background())
+
+	assert.ErrorIs(t, err, sarama.ErrClosedConsumerGroup)
+	consumerGroup.AssertExpectations(t)
+}
+
+type timeoutError struct{}
+
+func (timeoutError) Error() string { return "read tcp 127.0.0.1:1->127.0.0.1:9092: i/o timeout" }
+func (timeoutError) Timeout() bool   { return true }
+func (timeoutError) Temporary() bool { return true }
+
 func Test_Listen_ShutdownDoesNotRejoinClosedGroup(t *testing.T) {
 	consumeStarted := make(chan struct{})
 	sessionEnded := make(chan struct{})
