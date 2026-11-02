@@ -16,6 +16,12 @@ import (
 
 var errNoForwardTarget = errors.New("no forward target configured")
 
+const maxConsumeTimeouts = 5
+
+// consumeRejoinDelay pauses before the listener joins the group again.
+// A rebalance or a short broker timeout must not stop the process.
+var consumeRejoinDelay = time.Second
+
 type processingResult struct {
 	commit bool
 	err    error
@@ -256,6 +262,7 @@ func (l *listener) Listen(consumerContext context.Context) error {
 	slog.Info("starting listener", logFieldName("consumerGroup", "consumer_group"), l.groupID, "topics", l.topics)
 
 	// When a session is over, make consumer join a new session, as long as the context is not cancelled
+	var consumeTimeouts int
 	for {
 		if l.isStopping() {
 			slog.Info("listener stopping (shutdown)", logFieldName("consumerGroup", "consumer_group"), l.groupID)
@@ -270,10 +277,16 @@ func (l *listener) Listen(consumerContext context.Context) error {
 			return nil
 		}
 		if err != nil {
-			slog.Error("consumer group consume error", "error", err, logFieldName("consumerGroup", "consumer_group"), l.groupID)
-
-			return err
+			if consumerContext.Err() != nil {
+				slog.Info("listener stopping (context cancelled)", logFieldName("consumerGroup", "consumer_group"), l.groupID)
+				return consumerContext.Err()
+			}
+			if rejoinErr := rejoinAfterConsumeError(consumerContext, l.groupID, err, &consumeTimeouts); rejoinErr != nil {
+				return rejoinErr
+			}
+			continue
 		}
+		consumeTimeouts = 0
 		err = consumerContext.Err()
 		if err != nil {
 			// Check if context is cancelled
@@ -283,6 +296,49 @@ func (l *listener) Listen(consumerContext context.Context) error {
 		}
 		slog.Debug("consumer group session ended, rejoining", logFieldName("consumerGroup", "consumer_group"), l.groupID)
 	}
+}
+
+// rejoinAfterConsumeError keeps the listener in the group after a rebalance.
+// A broker read timeout is retried a few times, then returned so the process can restart.
+// Any other error stops the listener.
+func rejoinAfterConsumeError(ctx context.Context, groupID string, err error, consumeTimeouts *int) error {
+	if !isRebalanceConsumeError(err) && !isTimeoutConsumeError(err) {
+		slog.Error("consumer group consume error", "error", err, logFieldName("consumerGroup", "consumer_group"), groupID)
+		return err
+	}
+
+	if isTimeoutConsumeError(err) {
+		*consumeTimeouts++
+		if *consumeTimeouts >= maxConsumeTimeouts {
+			slog.Error("consumer group consume error", "error", err, logFieldName("consumerGroup", "consumer_group"), groupID)
+			return err
+		}
+	} else {
+		*consumeTimeouts = 0
+	}
+
+	slog.Warn("consumer group consume error, rejoining", "error", err, logFieldName("consumerGroup", "consumer_group"), groupID)
+	timer := time.NewTimer(consumeRejoinDelay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		slog.Info("listener stopping (context cancelled)", logFieldName("consumerGroup", "consumer_group"), groupID)
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func isRebalanceConsumeError(err error) bool {
+	return errors.Is(err, sarama.ErrRebalanceInProgress) ||
+		errors.Is(err, sarama.ErrUnknownMemberId) ||
+		errors.Is(err, sarama.ErrIllegalGeneration) ||
+		errors.Is(err, sarama.ErrNotCoordinatorForConsumer)
+}
+
+func isTimeoutConsumeError(err error) bool {
+	var timeout interface{ Timeout() bool }
+	return errors.As(err, &timeout) && timeout.Timeout()
 }
 
 func (l *listener) isStopping() bool {
