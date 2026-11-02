@@ -1,9 +1,11 @@
 package kafka
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -1202,15 +1204,88 @@ func Test_Shutdown_WaitsForActiveHandler(t *testing.T) {
 }
 
 func Test_Shutdown_DeadlineClosesResources(t *testing.T) {
+	closed := make(chan struct{})
 	group := &mocks.ConsumerGroup{}
 	group.On("PauseAll").Return().Once()
-	group.On("Close").Return(nil).Once()
+	group.On("Close").Run(func(mock.Arguments) { close(closed) }).Return(nil).Once()
 	l := &listener{consumerGroup: group}
 	assert.True(t, l.beginProcessing())
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	assert.ErrorIs(t, l.Shutdown(ctx), context.Canceled)
+	<-closed
 	l.endProcessing()
+	group.AssertExpectations(t)
+}
+
+func Test_Shutdown_ReturnsAtDeadlineWhileCloseBlocks(t *testing.T) {
+	releaseClose := make(chan struct{})
+	closeStarted := make(chan struct{})
+	group := &mocks.ConsumerGroup{}
+	group.On("PauseAll").Return().Once()
+	group.On("Close").Run(func(mock.Arguments) {
+		close(closeStarted)
+		<-releaseClose
+	}).Return(nil).Once()
+	l := &listener{consumerGroup: group}
+	assert.True(t, l.beginProcessing())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	shutdownDone := make(chan error, 1)
+	go func() { shutdownDone <- l.Shutdown(ctx) }()
+
+	select {
+	case err := <-shutdownDone:
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not return at the deadline while close was blocked")
+	}
+	<-closeStarted
+	close(releaseClose)
+	l.endProcessing()
+	group.AssertExpectations(t)
+}
+
+func Test_Pause_StopsNewMessagesWithoutWaiting(t *testing.T) {
+	group := &mocks.ConsumerGroup{}
+	group.On("PauseAll").Return().Twice()
+	l := &listener{consumerGroup: group}
+
+	l.Pause()
+	l.Pause()
+
+	assert.False(t, l.beginProcessing())
+	group.AssertExpectations(t)
+}
+
+func Test_Listen_ShutdownLogsFinalFlushError(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	flushErr := errors.New("final offset flush failed")
+	consumeStarted := make(chan struct{})
+	consumeReturns := make(chan struct{})
+	group := &mocks.ConsumerGroup{}
+	group.On("Consume", mock.Anything, mock.Anything, mock.Anything).
+		Run(func(mock.Arguments) {
+			close(consumeStarted)
+			<-consumeReturns
+		}).
+		Return(flushErr).Once()
+	group.On("PauseAll").Return().Once()
+	group.On("Close").Run(func(mock.Arguments) { close(consumeReturns) }).Return(nil).Once()
+
+	l := &listener{consumerGroup: group}
+	listenDone := make(chan error, 1)
+	go func() { listenDone <- l.Listen(context.Background()) }()
+	<-consumeStarted
+
+	assert.NoError(t, l.Shutdown(context.Background()))
+	assert.NoError(t, <-listenDone)
+	assert.Contains(t, logs.String(), "final offset flush failed")
 	group.AssertExpectations(t)
 }
 

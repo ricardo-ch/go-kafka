@@ -79,6 +79,13 @@ type Listener interface {
 	GroupID() string
 }
 
+// Pauser is implemented by listeners that can stop taking new messages without waiting.
+// Listeners returned by NewListener implement it.
+type Pauser interface {
+	// Pause stops fetching and stops admitting new messages. It returns immediately and is idempotent.
+	Pause()
+}
+
 type LogContextStorer func(ctx context.Context, logger *slog.Logger) context.Context
 
 // NewListener creates a new instance of Listener
@@ -273,6 +280,10 @@ func (l *listener) Listen(consumerContext context.Context) error {
 		// This block until the `session` is over. (basically until next rebalance)
 		err := l.consumerGroup.Consume(consumerContext, l.topics, l)
 		if l.isStopping() {
+			// The session release flushes final offsets. Its error is returned here, so log it.
+			if err != nil && !errors.Is(err, sarama.ErrClosedConsumerGroup) {
+				slog.Error("consumer group error during shutdown", "error", err, logFieldName("consumerGroup", "consumer_group"), l.groupID)
+			}
 			slog.Info("listener stopping (shutdown)", logFieldName("consumerGroup", "consumer_group"), l.groupID)
 			return nil
 		}
@@ -372,22 +383,38 @@ func (l *listener) pauseAll() <-chan struct{} {
 	return drained
 }
 
-// Shutdown waits for active handlers to finish before closing the consumer group
-// and producer. If ctx expires while waiting for handlers, it closes the
-// resources and returns ctx.Err().
-// Sarama's Close may still block after the deadline while releasing a session.
+// Pause stops fetching and stops admitting new messages. It does not wait for active handlers.
+func (l *listener) Pause() {
+	_ = l.pauseAll()
+}
+
+// Shutdown pauses the listener, waits for active handlers to finish, and then closes
+// the consumer group and producer. Closing runs in the background, so Shutdown returns
+// ctx.Err() as soon as ctx expires, even if the close is still running.
+// Cancelling the session on close also cancels handlers that are still running.
 func (l *listener) Shutdown(ctx context.Context) error {
 	drained := l.pauseAll()
 	slog.Debug("listener pausing all", logFieldName("consumerGroup", "consumer_group"), l.groupID)
-	defer l.Close()
 	if drained != nil {
 		select {
 		case <-drained:
 			slog.Debug("listener drained", logFieldName("consumerGroup", "consumer_group"), l.groupID)
 		case <-ctx.Done():
-			return ctx.Err()
 		}
 	}
+
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		l.Close()
+	}()
+
+	select {
+	case <-closed:
+	case <-ctx.Done():
+		slog.Warn("listener close still running after shutdown deadline", logFieldName("consumerGroup", "consumer_group"), l.groupID)
+	}
+
 	return ctx.Err()
 }
 
