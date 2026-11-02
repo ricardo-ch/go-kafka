@@ -68,6 +68,9 @@ type listener struct {
 	paused             bool
 	processing         int
 	drained            chan struct{}
+	readyInit          sync.Once
+	readyOnce          sync.Once
+	readyCh            chan struct{}
 }
 
 // Listener is able to listen multiple topics with one handler by topic
@@ -78,6 +81,15 @@ type Listener interface {
 	Shutdown(ctx context.Context) error
 	GroupID() string
 }
+
+// ReadinessReporter is implemented by listeners that report startup readiness.
+// Ready returns a channel that is closed after the first successful Kafka session setup.
+// It stays closed for the life of the listener, including across rebalances.
+type ReadinessReporter interface {
+	Ready() <-chan struct{}
+}
+
+var _ ReadinessReporter = (*listener)(nil)
 
 type LogContextStorer func(ctx context.Context, logger *slog.Logger) context.Context
 
@@ -167,6 +179,27 @@ func NewListener(groupID string, handlers Handlers, options ...ListenerOption) (
 // GroupID returns the groupID of the listener
 func (l *listener) GroupID() string {
 	return l.groupID
+}
+
+// Ready returns a channel closed after the listener first sets up a Kafka session.
+func (l *listener) Ready() <-chan struct{} {
+	return l.readySignal()
+}
+
+// readySignal lazily creates the ready channel so a zero-value listener is usable.
+func (l *listener) readySignal() chan struct{} {
+	l.readyInit.Do(func() {
+		l.readyCh = make(chan struct{})
+	})
+
+	return l.readyCh
+}
+
+func (l *listener) markReady() {
+	l.readyOnce.Do(func() {
+		close(l.readySignal())
+		slog.Info("listener ready", logFieldName("consumerGroup", "consumer_group"), l.groupID)
+	})
 }
 
 // checkErrorTopicToAvoidInfiniteLoop checks if the error topic is configured correctly.
@@ -430,6 +463,8 @@ func (l *listener) Setup(session sarama.ConsumerGroupSession) error {
 		logFieldName("memberID", "member_id"), session.MemberID(),
 		"claims", session.Claims(),
 	)
+
+	l.markReady()
 
 	return nil
 }

@@ -1214,6 +1214,158 @@ func Test_Shutdown_DeadlineClosesResources(t *testing.T) {
 	group.AssertExpectations(t)
 }
 
+func newSessionMock(claims map[string][]int32) *mocks.ConsumerGroupSession {
+	session := &mocks.ConsumerGroupSession{}
+	session.On("Claims").Return(claims)
+	session.On("GenerationID").Return(int32(1))
+	session.On("MemberID").Return("member-1")
+	return session
+}
+
+func assertNotReady(t *testing.T, r ReadinessReporter) {
+	t.Helper()
+	select {
+	case <-r.Ready():
+		t.Fatal("listener reported ready before its first session setup")
+	default:
+	}
+}
+
+func assertReady(t *testing.T, r ReadinessReporter) {
+	t.Helper()
+	select {
+	case <-r.Ready():
+	default:
+		t.Fatal("listener is not ready")
+	}
+}
+
+func Test_Ready_NotClosedBeforeSessionSetup(t *testing.T) {
+	l := &listener{consumerGroup: &mocks.ConsumerGroup{}}
+
+	assertNotReady(t, l)
+}
+
+func Test_Setup_MarksReady_WithZeroPartitions(t *testing.T) {
+	l := &listener{groupID: "group-a", consumerGroup: &mocks.ConsumerGroup{}}
+
+	assert.NoError(t, l.Setup(newSessionMock(map[string][]int32{})))
+
+	assertReady(t, l)
+}
+
+func Test_Setup_ReadinessStaysSatisfiedAcrossRebalances(t *testing.T) {
+	l := &listener{groupID: "group-a", consumerGroup: &mocks.ConsumerGroup{}}
+
+	assert.NoError(t, l.Setup(newSessionMock(map[string][]int32{"topic-test": {0, 1}})))
+	assertReady(t, l)
+
+	assert.NoError(t, l.Setup(newSessionMock(map[string][]int32{})))
+	assertReady(t, l)
+}
+
+func Test_Setup_ReadinessIsIndependentPerListener(t *testing.T) {
+	first := &listener{groupID: "group-a", consumerGroup: &mocks.ConsumerGroup{}}
+	second := &listener{groupID: "group-b", consumerGroup: &mocks.ConsumerGroup{}}
+
+	assert.NoError(t, first.Setup(newSessionMock(map[string][]int32{"topic-test": {0}})))
+
+	assertReady(t, first)
+	assertNotReady(t, second)
+
+	assert.NoError(t, second.Setup(newSessionMock(map[string][]int32{})))
+	assertReady(t, second)
+}
+
+func Test_Listen_ReadyAfterFirstSessionWithZeroPartitions(t *testing.T) {
+	session := newSessionMock(map[string][]int32{})
+	sessionStarted := make(chan struct{})
+	consumerGroup := &mocks.ConsumerGroup{}
+	consumerGroup.On("Consume", mock.Anything, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			handler := args.Get(2).(sarama.ConsumerGroupHandler)
+			assert.NoError(t, handler.Setup(session))
+			close(sessionStarted)
+			<-args.Get(0).(context.Context).Done()
+		}).
+		Return(nil).Once()
+
+	l := &listener{groupID: "group-a", consumerGroup: consumerGroup}
+	ctx, cancel := context.WithCancel(context.Background())
+	listenDone := make(chan error, 1)
+	go func() { listenDone <- l.Listen(ctx) }()
+
+	select {
+	case <-sessionStarted:
+	case <-time.After(time.Second):
+		t.Fatal("listener did not start a session")
+	}
+	assertReady(t, l)
+	cancel()
+
+	assert.ErrorIs(t, <-listenDone, context.Canceled)
+	consumerGroup.AssertExpectations(t)
+}
+
+func Test_Listen_ReadyStaysSatisfiedAfterRebalance(t *testing.T) {
+	previousDelay := consumeRejoinDelay
+	consumeRejoinDelay = 0
+	t.Cleanup(func() { consumeRejoinDelay = previousDelay })
+
+	secondSessionReady := make(chan struct{})
+	consumerGroup := &mocks.ConsumerGroup{}
+	consumerGroup.On("Consume", mock.Anything, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			handler := args.Get(2).(sarama.ConsumerGroupHandler)
+			assert.NoError(t, handler.Setup(newSessionMock(map[string][]int32{"topic-test": {0}})))
+		}).
+		Return(nil).Once()
+	consumerGroup.On("Consume", mock.Anything, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			handler := args.Get(2).(sarama.ConsumerGroupHandler)
+			assert.NoError(t, handler.Setup(newSessionMock(map[string][]int32{})))
+			close(secondSessionReady)
+			<-args.Get(0).(context.Context).Done()
+		}).
+		Return(nil).Once()
+
+	l := &listener{groupID: "group-a", consumerGroup: consumerGroup}
+	ctx, cancel := context.WithCancel(context.Background())
+	listenDone := make(chan error, 1)
+	go func() { listenDone <- l.Listen(ctx) }()
+
+	select {
+	case <-secondSessionReady:
+	case <-time.After(time.Second):
+		t.Fatal("listener did not start a second session after the rebalance")
+	}
+	assertReady(t, l)
+	cancel()
+
+	assert.ErrorIs(t, <-listenDone, context.Canceled)
+	consumerGroup.AssertExpectations(t)
+}
+
+func Test_Ready_ConcurrentSetupAndReaders(t *testing.T) {
+	l := &listener{groupID: "group-a", consumerGroup: &mocks.ConsumerGroup{}}
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			assert.NoError(t, l.Setup(newSessionMock(map[string][]int32{})))
+		})
+		wg.Go(func() {
+			select {
+			case <-l.Ready():
+			default:
+			}
+		})
+	}
+	wg.Wait()
+
+	assertReady(t, l)
+}
+
 func Test_getBackoffDuration(t *testing.T) {
 	// getBackoffDuration uses sarama.NewExponentialBackoff which implements KIP-580 with jitter
 	// So we test that the backoff is within a reasonable range
