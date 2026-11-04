@@ -1218,6 +1218,7 @@ func Test_getBackoffDuration(t *testing.T) {
 	type Inputs struct {
 		handlerDuration *time.Duration
 		globalDuration  time.Duration
+		globalLimit     *time.Duration
 		retryNumber     int
 		maxRetries      int
 	}
@@ -1274,6 +1275,16 @@ func Test_getBackoffDuration(t *testing.T) {
 			outputs: Outputs{3 * time.Second, 3 * time.Second},
 		},
 		{
+			name:    "Zero global durations use built-in base default",
+			inputs:  Inputs{globalLimit: new(time.Duration(0))},
+			outputs: Outputs{2 * time.Second, 2 * time.Second},
+		},
+		{
+			name:    "Negative global durations use built-in cap during prolonged retries",
+			inputs:  Inputs{globalDuration: -time.Second, globalLimit: new(-time.Second), retryNumber: 1014210, maxRetries: InfiniteRetries},
+			outputs: Outputs{10 * time.Minute, 10 * time.Minute},
+		},
+		{
 			name:    "Default exponential calculation preserves jitter",
 			inputs:  Inputs{handlerDuration: new(2 * time.Second), retryNumber: 2},
 			outputs: Outputs{3200 * time.Millisecond, 4800 * time.Millisecond},
@@ -1293,6 +1304,9 @@ func Test_getBackoffDuration(t *testing.T) {
 			})
 			DurationBeforeRetry = testCase.inputs.globalDuration
 			MaxBackoffDuration = 10 * time.Minute
+			if testCase.inputs.globalLimit != nil {
+				MaxBackoffDuration = *testCase.inputs.globalLimit
+			}
 			ExponentialBackoffFunc = testCase.calls.globalBackoff
 
 			handler := Handler{Config: HandlerConfig{

@@ -6,15 +6,16 @@ import (
 	"time"
 )
 
-// defaultBackoffDuration preserves Sarama's retry numbering, jitter and fallback
-// durations, but caps floating-point growth before converting to time.Duration.
+// defaultBackoffDuration preserves Sarama's retry numbering and jitter, uses
+// go-kafka defaults for invalid durations, and caps floating-point growth before
+// converting to time.Duration.
 // This also handles retry counts large enough for Exp2 to return +Inf.
 func defaultBackoffDuration(base, limit time.Duration, retryNumber int) time.Duration {
 	if base <= 0 {
-		base = 100 * time.Millisecond
+		base = defaultDurationBeforeRetry
 	}
 	if limit <= 0 {
-		limit = time.Second
+		limit = defaultMaxBackoffDuration
 	}
 	base = min(base, limit)
 	if retryNumber <= 0 {

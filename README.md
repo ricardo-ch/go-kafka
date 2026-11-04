@@ -212,7 +212,7 @@ Priority order for backoff calculation:
 2. Global `ExponentialBackoffFunc` (if set)
 3. Overflow-safe default using the handler's base delay and `MaxBackoffDuration`
 
-Custom functions retain control of the returned delay; they must enforce their own bounds. For compatibility with Sarama, non-positive default-strategy durations fall back to a 100ms base and a 1s cap. The default strategy always returns at least 1ns, including when jitter is applied to a 1ns base.
+Custom functions retain control of the returned delay; they must enforce their own bounds. Non-positive durations in the default strategy fall back to go-kafka's built-in defaults: a 2s base and a 10m cap, even if the global configuration variables are invalid. The default strategy always returns at least 1ns, including when jitter is applied to a 1ns base.
 
 ### Retry and Deadletter topics
 

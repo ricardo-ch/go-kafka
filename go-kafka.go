@@ -31,13 +31,18 @@ var ConsumerMaxRetries = 3
 // It is used to set the ConsumerMaxRetries to a blocking retry process.
 const InfiniteRetries = -1
 
+const (
+	defaultDurationBeforeRetry = 2 * time.Second
+	defaultMaxBackoffDuration  = 10 * time.Minute
+)
+
 // DurationBeforeRetry is the duration we wait between process retries.
 // By default 2 seconds.
-var DurationBeforeRetry = 2 * time.Second
+var DurationBeforeRetry = defaultDurationBeforeRetry
 
 // MaxBackoffDuration is the maximum backoff duration for message processing retries.
 // By default 10 minute.
-var MaxBackoffDuration = 10 * time.Minute
+var MaxBackoffDuration = defaultMaxBackoffDuration
 
 // ForwardMaxBackoffDuration is the maximum backoff duration when retrying to forward
 // a message to a retry or deadletter topic after a producer failure.
