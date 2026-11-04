@@ -44,7 +44,7 @@ type Handler struct {
 }
 
 // BackoffFunc is the function used to calculate backoff duration when ExponentialBackoff is true.
-// If nil, the global ExponentialBackoffFunc (using sarama.NewExponentialBackoff) will be used.
+// If nil, the global ExponentialBackoffFunc or the overflow-safe default will be used.
 // The function signature is: func(retries, maxRetries int) time.Duration
 type BackoffFunc func(retries, maxRetries int) time.Duration
 
@@ -871,13 +871,10 @@ func retryDuration(handler Handler, retryNumber int, exponentialBackoff bool) ti
 	return durationBeforeRetry
 }
 
-var defaultBackoffOnce sync.Once
-var defaultBackoffFunc BackoffFunc
-
 // getBackoffDuration returns the exponential backoff duration using (in priority order):
 // 1. The handler's custom BackoffFunc
 // 2. The global ExponentialBackoffFunc (if set by the client)
-// 3. A lazily-created sarama.NewExponentialBackoff using the current DurationBeforeRetry/MaxBackoffDuration
+// 3. The overflow-safe default using the handler's base delay and MaxBackoffDuration
 func getBackoffDuration(handler Handler, retryNumber, maxRetries int) time.Duration {
 	if handler.Config.BackoffFunc != nil {
 		return handler.Config.BackoffFunc(retryNumber, maxRetries)
@@ -891,9 +888,5 @@ func getBackoffDuration(handler Handler, retryNumber, maxRetries int) time.Durat
 		durationBeforeRetry = *handler.Config.DurationBeforeRetry
 	}
 
-	defaultBackoffOnce.Do(func() {
-		defaultBackoffFunc = sarama.NewExponentialBackoff(durationBeforeRetry, MaxBackoffDuration)
-	})
-
-	return defaultBackoffFunc(retryNumber, maxRetries)
+	return defaultBackoffDuration(durationBeforeRetry, MaxBackoffDuration, retryNumber)
 }
