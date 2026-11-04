@@ -45,9 +45,8 @@ var MaxBackoffDuration = 10 * time.Minute
 var ForwardMaxBackoffDuration = 30 * time.Second
 
 // ExponentialBackoffFunc is the function used to calculate exponential backoff duration.
-// If nil (default), it is evaluated lazily using the current values of DurationBeforeRetry
-// and MaxBackoffDuration at the time of the first retry, via sarama.NewExponentialBackoff
-// (KIP-580 with jitter).
+// If nil (default), each retry uses an overflow-safe calculation with the handler's
+// DurationBeforeRetry (or the global default), MaxBackoffDuration, and KIP-580 jitter.
 // Set this to a custom function to override the default backoff strategy.
 var ExponentialBackoffFunc BackoffFunc
 

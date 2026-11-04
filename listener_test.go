@@ -1113,7 +1113,7 @@ func Test_Listen_ClosedGroupDoesNotRejoin(t *testing.T) {
 
 type timeoutError struct{}
 
-func (timeoutError) Error() string { return "read tcp 127.0.0.1:1->127.0.0.1:9092: i/o timeout" }
+func (timeoutError) Error() string   { return "read tcp 127.0.0.1:1->127.0.0.1:9092: i/o timeout" }
 func (timeoutError) Timeout() bool   { return true }
 func (timeoutError) Temporary() bool { return true }
 
@@ -1215,41 +1215,93 @@ func Test_Shutdown_DeadlineClosesResources(t *testing.T) {
 }
 
 func Test_getBackoffDuration(t *testing.T) {
-	// getBackoffDuration uses sarama.NewExponentialBackoff which implements KIP-580 with jitter
-	// So we test that the backoff is within a reasonable range
+	type Inputs struct {
+		handlerDuration *time.Duration
+		globalDuration  time.Duration
+		retryNumber     int
+		maxRetries      int
+	}
+	type Calls struct {
+		handlerBackoff BackoffFunc
+		globalBackoff  BackoffFunc
+	}
+	type Outputs struct {
+		minimum time.Duration
+		maximum time.Duration
+	}
+	type TestCase struct {
+		name    string
+		inputs  Inputs
+		calls   Calls
+		outputs Outputs
+	}
 
-	// Test with handler's custom BackoffFunc
-	t.Run("custom backoff func", func(t *testing.T) {
-		customBackoff := func(retries, maxRetries int) time.Duration {
-			return time.Duration(retries+1) * time.Second
-		}
-		handler := Handler{
-			Config: HandlerConfig{
-				BackoffFunc: customBackoff,
+	testCases := []TestCase{
+		{
+			name:   "Handler override takes priority and receives retry arguments",
+			inputs: Inputs{retryNumber: 2, maxRetries: 5},
+			calls: Calls{
+				handlerBackoff: func(retries, maxRetries int) time.Duration {
+					return time.Duration(retries+maxRetries) * time.Second
+				},
+				globalBackoff: func(int, int) time.Duration { return time.Hour },
 			},
-		}
-
-		delay := getBackoffDuration(handler, 2, 5)
-		assert.Equal(t, 3*time.Second, delay)
-	})
-
-	// Test with global ExponentialBackoffFunc (sarama.NewExponentialBackoff)
-	t.Run("global exponential backoff", func(t *testing.T) {
-		handler := Handler{
-			Config: HandlerConfig{
-				BackoffFunc: nil, // Uses global ExponentialBackoffFunc
+			outputs: Outputs{7 * time.Second, 7 * time.Second},
+		},
+		{
+			name:   "Global override receives infinite retry budget without capping its result",
+			inputs: Inputs{retryNumber: 2, maxRetries: InfiniteRetries},
+			calls: Calls{
+				globalBackoff: func(retries, maxRetries int) time.Duration {
+					return time.Duration(retries-maxRetries) * time.Hour
+				},
 			},
-		}
+			outputs: Outputs{3 * time.Hour, 3 * time.Hour},
+		},
+		{
+			name:    "Handler uses its own base delay",
+			inputs:  Inputs{handlerDuration: new(2 * time.Second), globalDuration: time.Second},
+			outputs: Outputs{2 * time.Second, 2 * time.Second},
+		},
+		{
+			name:    "Another handler does not reuse the previous base delay",
+			inputs:  Inputs{handlerDuration: new(5 * time.Second), globalDuration: time.Second},
+			outputs: Outputs{5 * time.Second, 5 * time.Second},
+		},
+		{
+			name:    "Unset handler duration uses global base delay",
+			inputs:  Inputs{globalDuration: 3 * time.Second},
+			outputs: Outputs{3 * time.Second, 3 * time.Second},
+		},
+		{
+			name:    "Default exponential calculation preserves jitter",
+			inputs:  Inputs{handlerDuration: new(2 * time.Second), retryNumber: 2},
+			outputs: Outputs{3200 * time.Millisecond, 4800 * time.Millisecond},
+		},
+		{
+			name:    "Long running retries stay capped",
+			inputs:  Inputs{handlerDuration: new(2 * time.Second), retryNumber: 1014210, maxRetries: InfiniteRetries},
+			outputs: Outputs{10 * time.Minute, 10 * time.Minute},
+		},
+	}
 
-		// sarama.NewExponentialBackoff includes jitter, so we just verify the backoff is positive
-		// and doesn't exceed MaxBackoffDuration
-		delay := getBackoffDuration(handler, 0, 5)
-		assert.True(t, delay > 0, "backoff should be positive")
-		assert.True(t, delay <= MaxBackoffDuration, "backoff should not exceed MaxBackoffDuration")
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			originalDuration, originalLimit, originalBackoff := DurationBeforeRetry, MaxBackoffDuration, ExponentialBackoffFunc
+			t.Cleanup(func() {
+				DurationBeforeRetry, MaxBackoffDuration, ExponentialBackoffFunc = originalDuration, originalLimit, originalBackoff
+			})
+			DurationBeforeRetry = testCase.inputs.globalDuration
+			MaxBackoffDuration = 10 * time.Minute
+			ExponentialBackoffFunc = testCase.calls.globalBackoff
 
-		// Verify that backoff generally increases with retries (may not always due to jitter)
-		delay1 := getBackoffDuration(handler, 1, 5)
-		assert.True(t, delay1 > 0, "backoff should be positive")
-		assert.True(t, delay1 <= MaxBackoffDuration, "backoff should not exceed MaxBackoffDuration")
-	})
+			handler := Handler{Config: HandlerConfig{
+				DurationBeforeRetry: testCase.inputs.handlerDuration,
+				BackoffFunc:         testCase.calls.handlerBackoff,
+			}}
+			delay := getBackoffDuration(handler, testCase.inputs.retryNumber, testCase.inputs.maxRetries)
+			assert.GreaterOrEqual(t, delay, testCase.outputs.minimum)
+			assert.LessOrEqual(t, delay, testCase.outputs.maximum)
+		})
+	}
 }

@@ -197,9 +197,9 @@ Per-handler override via `HandlerConfig`:
 
 #### Exponential backoff
 
-Activate with `ExponentialBackoff: true` on the handler config. Uses `sarama.NewExponentialBackoff` which implements [KIP-580](https://cwiki.apache.org/confluence/display/KAFKA/KIP-580%3A+Exponential+Backoff+for+Kafka+Clients) with jitter.
+Activate with `ExponentialBackoff: true` on the handler config. The default implements [KIP-580](https://cwiki.apache.org/confluence/display/KAFKA/KIP-580%3A+Exponential+Backoff+for+Kafka+Clients) with jitter. It caps the delay before converting to `time.Duration`, preventing overflow during prolonged or infinite retries. The existing timing is preserved: retry number 0 uses the base delay, retry number 1 uses the base delay with jitter, and subsequent retries double the delay with jitter up to the cap.
 
-`ExponentialBackoffFunc` is `nil` by default and evaluated lazily using the current values of `DurationBeforeRetry` and `MaxBackoffDuration`. Set it to a custom function to override the default strategy globally:
+`ExponentialBackoffFunc` is `nil` by default. Each default backoff calculation uses the handler's `DurationBeforeRetry` (falling back to the global value) and `MaxBackoffDuration`, without sharing a cached configuration between handlers. Set it to a custom function to override the default strategy globally:
 
 ```go
 kafka.ExponentialBackoffFunc = func(retries, maxRetries int) time.Duration {
@@ -210,7 +210,9 @@ kafka.ExponentialBackoffFunc = func(retries, maxRetries int) time.Duration {
 Priority order for backoff calculation:
 1. Handler's `BackoffFunc` (per-handler)
 2. Global `ExponentialBackoffFunc` (if set)
-3. Lazy `sarama.NewExponentialBackoff(DurationBeforeRetry, MaxBackoffDuration)`
+3. Overflow-safe default using the handler's base delay and `MaxBackoffDuration`
+
+Custom functions retain control of the returned delay; they must enforce their own bounds. For compatibility with Sarama, non-positive default-strategy durations fall back to a 100ms base and a 1s cap. The default strategy always returns at least 1ns, including when jitter is applied to a 1ns base.
 
 ### Retry and Deadletter topics
 
